@@ -1,23 +1,54 @@
 import ast
 
-VARIABLE_NODES = (ast.Name, ast.arg, ast.Constant)
-OPERATION_NODES = (ast.Assign, ast.AugAssign, ast.Compare, ast.BinOp,
-                   ast.UnaryOp, ast.BoolOp, ast.Call, ast.Return,
-                   ast.If, ast.For, ast.While)
+# Non-terminal AST nodes (structural/statement constructs).
+# Leaf nodes (Name, Constant, arg, etc.) are excluded per the GoC paper.
+NON_TERMINAL_NODES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.Return,
+    ast.Assign,
+    ast.AugAssign,
+    ast.AnnAssign,
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.ExceptHandler,
+    ast.Import,
+    ast.ImportFrom,
+    ast.Expr,
+    ast.Call,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.BoolOp,
+    ast.Compare,
+    ast.IfExp,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+    ast.Yield,
+    ast.YieldFrom,
+    ast.Raise,
+    ast.Assert,
+    ast.Delete,
+    ast.Global,
+    ast.Nonlocal,
+)
 
 
 def goc(clone):
-    # Parse the function into an AST
+    # Parse the function string into an AST
     tree = ast.parse(clone)
 
-    # Extract the nodes (e.g. variables and operations)
-    variables = []
-    operations = []
-
-    # Look for anything that acts on values or acts as a value and sort them into an array
+    # Walk the AST in post-order, collecting only non-terminal nodes
+    non_terminal_nodes = []
     for node in ast.walk(tree):
-        if isinstance(node, VARIABLE_NODES):
-            variables.append(node)
-        elif isinstance(node, OPERATION_NODES):
-            operations.append(node)
-    return
+        if isinstance(node, NON_TERMINAL_NODES):
+            non_terminal_nodes.append(node)
+
+    return non_terminal_nodes
