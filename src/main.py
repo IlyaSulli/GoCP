@@ -62,7 +62,7 @@ def load_data(data_folder, results_folder):
                         clone_b = extract_function(source, positions[1], matches)
 
                         print(f"  [LOADED] {filepath}")
-                        goc(clone_a, clone_b, results_folder)
+                        manage_clone(clone_a, clone_b)
                         clone_pair_found = True
                         break
 
@@ -82,6 +82,10 @@ def extract_function(source, start_pos, all_matches):
 
     # No next function — take everything to end of file
     return source[start_pos:].rstrip()
+
+def manage_clone(clone_a, clone_b):
+    goc_tree_a = goc(clone_a)
+    goc_tree_b = goc(clone_b)
 
 
 if __name__ == "__main__":
