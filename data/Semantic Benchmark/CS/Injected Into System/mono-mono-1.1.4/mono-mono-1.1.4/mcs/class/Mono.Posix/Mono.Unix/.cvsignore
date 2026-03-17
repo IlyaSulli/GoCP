@@ -1,0 +1,5 @@
+Mono.Posix.dll
+make-map.pdb
+map.c
+map.h
+*.mdb
