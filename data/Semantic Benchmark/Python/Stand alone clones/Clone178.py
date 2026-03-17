@@ -1,0 +1,36 @@
+def __init__(self, a = None, b = None, ** kwargs) :
+	self.relations = {
+	"e" : {"req" : ["a", "b"], "func" : lambda a, b : a + b},
+	"C" : {"req" : ["e", "a"], "func" : lambda e, a : e * 1 / (a * b)},
+	"A" : {"req" : ["C", "e"], "func" : lambda e, C : cmplx_func_A(e, C)},
+	"a" : {"req" : ["e", "b"], "func" : lambda e, b : e / b},
+	"b" : {"req" : ["e", "a"], "func" : lambda e, a : e / a}}
+	self.a = a
+	self.b = b
+	self.e = None
+	self.C = None
+	self.A = None
+	if kwargs :
+		for key in kwargs :
+			setattr(self, key, kwargs [key])
+
+
+def __init__(self, ** kwargs) :
+	available = set(kwargs)
+	derivable = set()
+	while True :
+		for r in range(1, len(available) + 1) :
+			for permutation in itertools.permutations(available, r) :
+				if permutation in self.relationships :
+					derivable.add(self.relationships [permutation])
+		if derivable.issubset(available) :
+			break
+		else :
+			available |= derivable
+	underivable = set(self.relationships.values()) - available
+	if len(underivable) > 0 :
+		raise TypeError(
+		"The following properties cannot be derived:\n\t{0}"
+		.format(tuple(underivable)))
+	self._value_dict = kwargs
+

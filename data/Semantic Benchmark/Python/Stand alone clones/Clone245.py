@@ -1,0 +1,26 @@
+def changelist_view(self, request, extra_context = None) :
+	default_filter = False
+	try :
+		ref = request.META ['HTTP_REFERER']
+		pinfo = request.META ['PATH_INFO']
+		qstr = ref.split(pinfo)
+		if len(qstr) < 2 :
+			default_filter = True
+	except :
+		default_filter = True
+	if default_filter :
+		q = request.GET.copy()
+		q ['registered__exact'] = '1'
+		request.GET = q
+		request.META ['QUERY_STRING'] = request.GET.urlencode()
+	return super(InterestAdmin, self).changelist_view(request, extra_context = extra_context)
+
+
+def changelist_view(self, request, extra_context = None) :
+	if not request.GET.has_key('decommissioned__exact') :
+		q = request.GET.copy()
+		q ['decommissioned__exact'] = 'N'
+		request.GET = q
+		request.META ['QUERY_STRING'] = request.GET.urlencode()
+	return super(MyModelAdmin, self).changelist_view(request, extra_context = extra_context)
+
