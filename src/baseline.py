@@ -9,7 +9,11 @@ from progress import ProgressBar
 
 
 def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
-    # Load raw function text for each unique function index
+    total_pairs = len(positive_pairs) + len(negative_pairs)
+    prep = ProgressBar(3, ["Done"])
+
+    # Step 1: Load raw function text for each unique function index
+    prep.status("Loading text files...")
     all_indices = set()
     for idx_a, idx_b in positive_pairs + negative_pairs:
         all_indices.add(idx_a)
@@ -19,31 +23,36 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
     for idx in all_indices:
         with open(os.path.join(temp_dir, f"func_{idx}.txt"), "r", encoding="utf-8") as f:
             texts[idx] = f.read()
+    prep.update("Done")
 
-    # Fit TF-IDF on all function texts
-    vectorizer = TfidfVectorizer(analyzer="word", token_pattern=r"[A-Za-z_]\w*|\S")
+    # Step 2: Fit TF-IDF on all function texts
+    prep.status("Fitting TF-IDF vectorizer...")
+    vectorizer = TfidfVectorizer(analyzer="word", token_pattern=r"[A-Za-z_]\w*|\S", max_features=5000)
     all_texts = [texts[idx] for idx in sorted(all_indices)]
     vectorizer.fit(all_texts)
+    prep.update("Done")
 
-    def get_tfidf(idx):
-        return vectorizer.transform([texts[idx]]).toarray()[0]
+    # Step 3: Transform all texts and build dataset
+    prep.status(f"Building feature matrix for {total_pairs} pairs...")
+    tfidf_cache = {idx: vectorizer.transform([texts[idx]]).toarray()[0] for idx in all_indices}
 
-    # Build dataset
     X = []
     y = []
 
     for idx_a, idx_b in positive_pairs:
-        vec_a, vec_b = get_tfidf(idx_a), get_tfidf(idx_b)
+        vec_a, vec_b = tfidf_cache[idx_a], tfidf_cache[idx_b]
         X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
         y.append(1)
 
     for idx_a, idx_b in negative_pairs:
-        vec_a, vec_b = get_tfidf(idx_a), get_tfidf(idx_b)
+        vec_a, vec_b = tfidf_cache[idx_a], tfidf_cache[idx_b]
         X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
         y.append(0)
 
     X = np.array(X)
     y = np.array(y)
+    prep.update("Done")
+    prep.finish()
 
     # 10-fold stratified cross-validation (same splits as GoC for fair comparison)
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
