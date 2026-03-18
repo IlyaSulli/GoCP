@@ -19,3 +19,5 @@
 - Additional errors were caused by python 2 in the dataset. This was fixed by creating a preprocessing stage that attempts to convert the files to python 3
 - Running additional checks found that preprocessing was taking significant time so the current implementation needs to be looked at in the future. (Currently 37s)
 - Updated features.py to have phase 2: graph-level features
+- Updated features.py to have phase 3: creating fixed-size stats
+- Fixed the pre-processing slow-down by using a ProcessPoolExecutor, allowing processes to run simultaneously

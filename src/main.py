@@ -1,7 +1,10 @@
 import argparse
 import os
+import random
 import re
-import warnings
+import shutil
+import numpy as np
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from goc import goc
 from features import features
@@ -10,10 +13,12 @@ from progress import ProgressBar
 
 DEFAULT_DATA_FOLDER = "./data/"
 DEFAULT_RESULTS_FOLDER = "./results/"
+TEMP_DIR = "./temp/"
+
+_FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
 
 def main():
-    # Get Arguments for data and results folder location
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", default=DEFAULT_DATA_FOLDER,
                         help=f"Path to the data folder (default: {DEFAULT_DATA_FOLDER})")
@@ -23,77 +28,52 @@ def main():
                         help="Display error details for each failed file")
     args = parser.parse_args()
 
-    data_folder = args.data
-    results_folder = args.results
-
     print(f"Starting model training for dataset")
     print(f"----------")
-    print(f"Data folder: {data_folder}")
-    print(f"Results folder: {results_folder}")
+    print(f"Data folder: {args.data}")
+    print(f"Results folder: {args.results}")
     print(f"----------")
     print(f"Processing data files")
-    load_data(data_folder, results_folder, show_errors=args.show_errors)
+    load_data(args.data, args.results, show_errors=args.show_errors)
 
 
 def load_data(data_folder, results_folder, show_errors=False):
-    # Pattern to match function definitions at any indentation level
-    func_def_pattern = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
+    py_files = [
+        os.path.join(root, f)
+        for root, _, files in os.walk(data_folder)
+        for f in files if f.endswith(".py")
+    ]
 
-    # Collect all .py files first for progress tracking
-    py_files = []
-    for root, _, files in os.walk(data_folder):
-        for filename in files:
-            if filename.endswith(".py"):
-                py_files.append(os.path.join(root, filename))
+    os.makedirs(TEMP_DIR, exist_ok=True)
 
     progress = ProgressBar(len(py_files), ["Loaded", "Skipped", "Errors"])
     error_log = []
+    positive_pairs = []
+    func_index = [0]
 
     try:
-        for filepath in py_files:
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    source = preprocess(f.read())
-
-                # Find all function definitions and their positions
-                matches = list(func_def_pattern.finditer(source))
-
-                # Group by function name
-                functions_by_name = {}
-                for match in matches:
-                    name = match.group(2)
-                    if name not in functions_by_name:
-                        functions_by_name[name] = []
-                    functions_by_name[name].append(match.start())
-
-                # Find a function name that appears exactly twice (the clone pair)
-                clone_pair_found = False
-                for func_name, positions in functions_by_name.items():
-                    if len(positions) == 2:
-                        clone_a = extract_function(source, positions[0], matches)
-                        clone_b = extract_function(source, positions[1], matches)
-
-                        with warnings.catch_warnings(record=True) as caught:
-                            warnings.simplefilter("always")
-                            manage_clone(clone_a, clone_b, progress, filepath)
-                            if show_errors and caught:
-                                for w in caught:
-                                    error_log.append(f"  {filepath}: {w.category.__name__}: {w.message}")
+        with ProcessPoolExecutor() as executor:
+            futures = {executor.submit(_process_file, fp): fp for fp in py_files}
+            for future in as_completed(futures):
+                filepath = futures[future]
+                try:
+                    result = future.result()
+                    if result is None:
+                        progress.update("Skipped")
+                    else:
+                        features_a, features_b = result
+                        idx_a, idx_b = _save_pair(features_a, features_b, func_index)
+                        positive_pairs.append((idx_a, idx_b))
                         progress.update("Loaded")
-                        clone_pair_found = True
-                        break
+                except Exception as e:
+                    if show_errors:
+                        error_log.append(f"  {filepath}: {e}")
+                    progress.update("Errors")
 
-                if not clone_pair_found:
-                    progress.update("Skipped")
-
-            except Exception as e:
-                if show_errors:
-                    error_log.append(f"  {filepath}: {e}")
-                progress.update("Errors")
     except KeyboardInterrupt:
-        # Handle Ctrl + C exiting to soft stop the program 
         progress.finish()
         print("\nInterrupted by user. Exiting.")
+        shutil.rmtree(TEMP_DIR, ignore_errors=True)
         return
 
     progress.finish()
@@ -103,23 +83,72 @@ def load_data(data_folder, results_folder, show_errors=False):
         for entry in error_log:
             print(entry)
 
+    num_positive = len(positive_pairs)
+    print(f"Generating {num_positive} negative pairs")
+    negative_pairs = _generate_negative_pairs(positive_pairs, func_index[0], num_positive)
 
-def extract_function(source, start_pos, all_matches):
-    """Extract a function's source from start_pos until the next top-level def or EOF."""
-    # Find the next function definition after this one
+    # TODO: pass positive_pairs, negative_pairs and TEMP_DIR to classifier
+
+    shutil.rmtree(TEMP_DIR, ignore_errors=True)
+
+
+def _process_file(filepath):
+    """Load, preprocess, find clone pair, and compute features.
+    Returns (features_a, features_b) or None if no clone pair found.
+    Runs in a worker process.
+    """
+    with open(filepath, "r", encoding="utf-8") as f:
+        source = preprocess(f.read())
+
+    matches = list(_FUNC_DEF_PATTERN.finditer(source))
+
+    functions_by_name = {}
+    for match in matches:
+        name = match.group(2)
+        if name not in functions_by_name:
+            functions_by_name[name] = []
+        functions_by_name[name].append(match.start())
+
+    for positions in functions_by_name.values():
+        if len(positions) == 2:
+            clone_a = _extract_function(source, positions[0], matches)
+            clone_b = _extract_function(source, positions[1], matches)
+            return features(goc(clone_a)), features(goc(clone_b))
+
+    return None
+
+
+def _extract_function(source, start_pos, all_matches):
     for match in all_matches:
         if match.start() > start_pos:
             return source[start_pos:match.start()].rstrip()
-
-    # No next function — take everything to end of file
     return source[start_pos:].rstrip()
 
-def manage_clone(clone_a, clone_b, progress=None, filepath=None):
-    goc_tree_a = goc(clone_a)
-    features_a = features(goc_tree_a)
-    goc_tree_b = goc(clone_b)
-    features_b = features(goc_tree_b)
-    
+
+def _save_pair(features_a, features_b, func_index):
+    idx_a, idx_b = func_index[0], func_index[0] + 1
+    func_index[0] += 2
+    np.save(os.path.join(TEMP_DIR, f"func_{idx_a}.npy"), features_a)
+    np.save(os.path.join(TEMP_DIR, f"func_{idx_b}.npy"), features_b)
+    return idx_a, idx_b
+
+
+def _generate_negative_pairs(positive_pairs, total_funcs, count):
+    positive_set = set(map(tuple, positive_pairs))
+    negative_pairs = []
+    attempts = 0
+
+    while len(negative_pairs) < count and attempts < count * 20:
+        idx_a = random.randrange(0, total_funcs)
+        idx_b = random.randrange(0, total_funcs)
+        same_file = (idx_a // 2 == idx_b // 2)
+        already_used = (min(idx_a, idx_b), max(idx_a, idx_b)) in positive_set
+
+        if idx_a != idx_b and not same_file and not already_used:
+            negative_pairs.append((idx_a, idx_b))
+        attempts += 1
+
+    return negative_pairs
 
 
 if __name__ == "__main__":
