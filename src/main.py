@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from goc import goc
 from features import features
 from preprocess import preprocess
+from classifier import classify
 from progress import ProgressBar
 
 DEFAULT_DATA_FOLDER = "./data/"
@@ -87,7 +88,7 @@ def load_data(data_folder, results_folder, show_errors=False):
     print(f"Generating {num_positive} negative pairs")
     negative_pairs = _generate_negative_pairs(positive_pairs, func_index[0], num_positive)
 
-    # TODO: pass positive_pairs, negative_pairs and TEMP_DIR to classifier
+    classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
 
     shutil.rmtree(TEMP_DIR, ignore_errors=True)
 

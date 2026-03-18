@@ -20,4 +20,5 @@
 - Running additional checks found that preprocessing was taking significant time so the current implementation needs to be looked at in the future. (Currently 37s)
 - Updated features.py to have phase 2: graph-level features
 - Updated features.py to have phase 3: creating fixed-size stats
-- Fixed the pre-processing slow-down by using a ProcessPoolExecutor, allowing processes to run simultaneously
+- Fixed the pre-processing slow-down by using a ProcessPoolExecutor, allowing processes to run simultaneously. Now takes 10 seconds to do inital steps
+- Created the classifer (uses scikit-learn). Current stats are "Average : Precision=0.5958  Recall=0.5957  F1=0.5955"
