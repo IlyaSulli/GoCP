@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import pickle
 import random
 import re
 import shutil
@@ -18,6 +19,8 @@ DEFAULT_RESULTS_FOLDER = "./results/"
 TEMP_DIR = "./temp/"
 DEFAULT_SAMPLE = 10000
 CACHE_FILE = os.path.join(TEMP_DIR, "pairs_cache.json")
+TEXTS_CACHE_FILE = os.path.join(TEMP_DIR, "texts_cache.pkl")
+FEATURES_CACHE_FILE = os.path.join(TEMP_DIR, "features_cache.npz")
 
 _FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
@@ -172,6 +175,8 @@ def _process_poolc(sample_size, show_errors):
     progress = ProgressBar(len(pairs_raw), ["Loaded", "Errors"])
     error_log = []
     labeled_pairs = []
+    texts = {}
+    feature_vecs = {}
     func_index = [0]
 
     try:
@@ -185,6 +190,10 @@ def _process_poolc(sample_size, show_errors):
                 try:
                     feat_a, feat_b, text_a, text_b = future.result()
                     idx_a, idx_b = _save_pair(feat_a, feat_b, text_a, text_b, func_index)
+                    texts[idx_a] = text_a
+                    texts[idx_b] = text_b
+                    feature_vecs[idx_a] = feat_a
+                    feature_vecs[idx_b] = feat_b
                     labeled_pairs.append((idx_a, idx_b, label))
                     progress.update("Loaded")
                 except Exception as e:
@@ -208,6 +217,12 @@ def _process_poolc(sample_size, show_errors):
     positive_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 1]
     negative_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 0]
     print(f"Processed: {len(positive_pairs)} positive, {len(negative_pairs)} negative pairs")
+
+    with open(TEXTS_CACHE_FILE, "wb") as f:
+        pickle.dump(texts, f)
+
+    np.savez(FEATURES_CACHE_FILE, **{str(k): v for k, v in feature_vecs.items()})
+
     return positive_pairs, negative_pairs
 
 
