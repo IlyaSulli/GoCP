@@ -14,7 +14,8 @@
      5. Return the constructed graph
 - Updated the file log to use a progress bar to reduce information overload
 - Started work on generating features set from constructed tree in goc.py . I am working on phase 1: node feature extraction
-- Completed phase 2 and 3
 - Tested the program and am getting 1000/1000 errors. Working on a fix
 - Found the fix: The iterations for metric Eigenvector Centrality had a maximum of 100 iterations. This was increased to 1000 to account for large graphs
-- Additional errors were caused by python 2 in the dataset. This was fixed by creating a preprocessing stage that attempts to convert the files to python 3 
+- Additional errors were caused by python 2 in the dataset. This was fixed by creating a preprocessing stage that attempts to convert the files to python 3
+- Running additional checks found that preprocessing was taking significant time so the current implementation needs to be looked at in the future. (Currently 37s)
+- Updated features.py to have phase 2: graph-level features

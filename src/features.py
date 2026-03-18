@@ -1,9 +1,13 @@
+import warnings
 import networkx as nx
 import numpy as np
 
-# Calculate the metrics
-# Weighted Degree, Eigenvector Centrality, Page Rank, Two-Hop Neighbours, Local Clustering Coefficient, Average Clustering Coefficient of Neighbours
 def features(tree):
+    ## Phase 1:
+    # Calculate the 6 node-level metrics
+    # Weighted Degree, Eigenvector Centrality, Page Rank, Two-Hop Neighbours, 
+    # Local Clustering Coefficient, Average Clustering Coefficient of Neighbours
+
     weighted_degree = tree.degree(weight="weight")
     try:
         eigenvector_centrality = nx.eigenvector_centrality(tree, weight="weight", max_iter=1000)
@@ -13,7 +17,45 @@ def features(tree):
     local_clustering = nx.clustering(tree.to_undirected())
     two_hop = twoHop(tree)
     neighbour_clustering = neighbourClustering(tree, local_clustering)
-    return weighted_degree, eigenvector_centrality, page_rank, two_hop, local_clustering, neighbour_clustering
+
+    ## Phase 2:
+    # Calculate the 8 graph-level metrics
+    # Network size, Total edges, Total triangles, Total weighted degree,
+    # Density, Assortativity, Transitivity, Average shortest path length
+
+    G_undirected = tree.to_undirected()
+
+    network_size = tree.number_of_nodes()
+    total_edges = tree.number_of_edges()
+
+    triangles_per_node = nx.triangles(G_undirected)
+    total_triangles = sum(triangles_per_node.values()) // 3
+
+    total_weighted_degree = sum(dict(tree.degree(weight="weight")).values())
+    density = nx.density(tree)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            assortativity = nx.degree_assortativity_coefficient(tree)
+    except Exception:
+        assortativity = 0.0
+
+    transitivity = nx.transitivity(G_undirected)
+
+    try:
+        if nx.is_weakly_connected(tree):
+            avg_shortest_path = nx.average_shortest_path_length(tree)
+        else:
+            largest_cc = max(nx.weakly_connected_components(tree), key=len)
+            avg_shortest_path = nx.average_shortest_path_length(tree.subgraph(largest_cc))
+    except Exception:
+        avg_shortest_path = 0.0
+
+    graph_features = [network_size, total_edges, total_triangles, total_weighted_degree,
+                      density, assortativity, transitivity, avg_shortest_path]
+
+    return weighted_degree, eigenvector_centrality, page_rank, two_hop, local_clustering, neighbour_clustering, graph_features
 
 ## Two-Hop Neighbours Algorithm
 # For each node, get its direct neighbours then their neighbours
