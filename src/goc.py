@@ -1,4 +1,7 @@
 import ast
+import os
+import warnings
+
 import networkx as nx
 
 # Non-terminal AST nodes (structural/statement constructs).
@@ -42,11 +45,19 @@ NON_TERMINAL_NODES = (
 )
 
 
-def goc(clone):
+def goc(clone, progress=None, filepath=None):
+    label = os.path.basename(filepath) if filepath else "unknown"
+
     # Step 1: Parse the function string into an AST
-    tree = ast.parse(clone)
+    if progress:
+        progress.status(f"GoC [{label}]: Parsing AST")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(clone)
 
     # Step 2: Set a .parent attribute on every node to aid look ups for parent-child relationships
+    if progress:
+        progress.status(f"GoC [{label}]: Setting parent references")
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
             child.parent = node
@@ -56,6 +67,8 @@ def goc(clone):
     # A directed edge from parent to child is added for every parent-child
     # relationship between two non-terminal nodes. The edge weight counts
     # how many times that dependency appears (increments if seen again).
+    if progress:
+        progress.status(f"GoC [{label}]: Building graph nodes")
     graph = nx.DiGraph()
     node_to_id = {}
     next_id = 0
@@ -67,6 +80,8 @@ def goc(clone):
                 graph.add_node(next_id, type=type(node).__name__)
                 next_id += 1
 
+    if progress:
+        progress.status(f"GoC [{label}]: Adding edges")
     for node in ast.walk(tree):
         if isinstance(node, NON_TERMINAL_NODES):
             parent = getattr(node, "parent", None)
