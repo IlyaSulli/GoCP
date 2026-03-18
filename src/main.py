@@ -27,6 +27,8 @@ def main():
                         help=f"Path to the results folder (default: {DEFAULT_RESULTS_FOLDER})")
     parser.add_argument("--show-errors", action="store_true",
                         help="Display error details for each failed file")
+    parser.add_argument("--baseline", action="store_true",
+                        help="Run TF-IDF baseline classifier for comparison")
     args = parser.parse_args()
 
     print(f"Starting model training for dataset")
@@ -35,10 +37,10 @@ def main():
     print(f"Results folder: {args.results}")
     print(f"----------")
     print(f"Processing data files")
-    load_data(args.data, args.results, show_errors=args.show_errors)
+    load_data(args.data, args.results, show_errors=args.show_errors, run_baseline=args.baseline)
 
 
-def load_data(data_folder, results_folder, show_errors=False):
+def load_data(data_folder, results_folder, show_errors=False, run_baseline=False):
     py_files = [
         os.path.join(root, f)
         for root, _, files in os.walk(data_folder)
@@ -62,8 +64,8 @@ def load_data(data_folder, results_folder, show_errors=False):
                     if result is None:
                         progress.update("Skipped")
                     else:
-                        features_a, features_b = result
-                        idx_a, idx_b = _save_pair(features_a, features_b, func_index)
+                        features_a, features_b, text_a, text_b = result
+                        idx_a, idx_b = _save_pair(features_a, features_b, text_a, text_b, func_index)
                         positive_pairs.append((idx_a, idx_b))
                         progress.update("Loaded")
                 except Exception as e:
@@ -88,7 +90,12 @@ def load_data(data_folder, results_folder, show_errors=False):
     print(f"Generating {num_positive} negative pairs")
     negative_pairs = _generate_negative_pairs(positive_pairs, func_index[0], num_positive)
 
+    print("Running GoC classifier...")
     classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
+    if run_baseline:
+        from baseline import baseline
+        print("Running TF-IDF baseline...")
+        baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
 
     shutil.rmtree(TEMP_DIR, ignore_errors=True)
 
@@ -114,7 +121,7 @@ def _process_file(filepath):
         if len(positions) == 2:
             clone_a = _extract_function(source, positions[0], matches)
             clone_b = _extract_function(source, positions[1], matches)
-            return features(goc(clone_a)), features(goc(clone_b))
+            return features(goc(clone_a)), features(goc(clone_b)), clone_a, clone_b
 
     return None
 
@@ -126,11 +133,15 @@ def _extract_function(source, start_pos, all_matches):
     return source[start_pos:].rstrip()
 
 
-def _save_pair(features_a, features_b, func_index):
+def _save_pair(features_a, features_b, text_a, text_b, func_index):
     idx_a, idx_b = func_index[0], func_index[0] + 1
     func_index[0] += 2
     np.save(os.path.join(TEMP_DIR, f"func_{idx_a}.npy"), features_a)
     np.save(os.path.join(TEMP_DIR, f"func_{idx_b}.npy"), features_b)
+    with open(os.path.join(TEMP_DIR, f"func_{idx_a}.txt"), "w", encoding="utf-8") as f:
+        f.write(text_a)
+    with open(os.path.join(TEMP_DIR, f"func_{idx_b}.txt"), "w", encoding="utf-8") as f:
+        f.write(text_b)
     return idx_a, idx_b
 
 
