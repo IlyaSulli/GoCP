@@ -8,27 +8,26 @@ from progress import ProgressBar
 
 
 def classify(positive_pairs, negative_pairs, temp_dir, results_folder):
-    # Build dataset: each sample is 112 features (concat of func_a + func_b), label 1 or 0
+    # Build dataset: each sample is 168 features (concat of func_a + func_b + |func_a - func_b|), label 1 or 0
     X = []
     y = []
 
+    def load_vec(idx):
+        v = np.load(os.path.join(temp_dir, f"func_{idx}.npy"))
+        return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+
     for idx_a, idx_b in positive_pairs:
-        vec_a = np.load(os.path.join(temp_dir, f"func_{idx_a}.npy"))
-        vec_b = np.load(os.path.join(temp_dir, f"func_{idx_b}.npy"))
-        X.append(np.concatenate([vec_a, vec_b]))
+        vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
+        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
         y.append(1)
 
     for idx_a, idx_b in negative_pairs:
-        vec_a = np.load(os.path.join(temp_dir, f"func_{idx_a}.npy"))
-        vec_b = np.load(os.path.join(temp_dir, f"func_{idx_b}.npy"))
-        X.append(np.concatenate([vec_a, vec_b]))
+        vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
+        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
         y.append(0)
 
     X = np.array(X)
     y = np.array(y)
-
-    # Replace any NaN or inf values produced by degenerate graphs
-    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
     # 10-fold stratified cross-validation
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
