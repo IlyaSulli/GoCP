@@ -3,35 +3,71 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import canberra, cosine
+from scipy.stats import pearsonr
 import csv
 from progress import ProgressBar
 
 
+def _similarity_features(vec_a, vec_b):
+    try:
+        canberra_dist = canberra(vec_a, vec_b)
+    except Exception:
+        canberra_dist = 0.0
+    try:
+        cosine_dist = cosine(vec_a, vec_b)
+    except Exception:
+        cosine_dist = 0.0
+    euclidean_dist = float(np.linalg.norm(vec_a - vec_b))
+    try:
+        corr, _ = pearsonr(vec_a, vec_b)
+        corr = 0.0 if np.isnan(corr) else corr
+    except Exception:
+        corr = 0.0
+    return np.array([canberra_dist, cosine_dist, euclidean_dist, corr])
+
+
 def classify(positive_pairs, negative_pairs, temp_dir, results_folder):
-    # Build dataset: each sample is 168 features (concat of func_a + func_b + |func_a - func_b|), label 1 or 0
+    # Build dataset: 168 structural features + 4 similarity metrics = 172 features
+
+    # Load all feature vectors — use single cache file if available
+    features_cache_path = os.path.join(temp_dir, "features_cache.npz")
+    if os.path.exists(features_cache_path):
+        print("  Loading features cache...")
+        cache = np.load(features_cache_path)
+        def load_vec(idx):
+            return np.nan_to_num(cache[str(idx)], nan=0.0, posinf=0.0, neginf=0.0)
+    else:
+        def load_vec(idx):
+            v = np.load(os.path.join(temp_dir, f"func_{idx}.npy"))
+            return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+
     X = []
     y = []
 
-    def load_vec(idx):
-        v = np.load(os.path.join(temp_dir, f"func_{idx}.npy"))
-        return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
-
     for idx_a, idx_b in positive_pairs:
         vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
-        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
+        sim = _similarity_features(vec_a, vec_b)
+        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
         y.append(1)
 
     for idx_a, idx_b in negative_pairs:
         vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
-        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
+        sim = _similarity_features(vec_a, vec_b)
+        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
         y.append(0)
 
     X = np.array(X)
     y = np.array(y)
 
+    # Scale features so large-magnitude features don't dominate |A-B|
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
     # 10-fold stratified cross-validation
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
 
     fold_results = []
     progress = ProgressBar(10, ["Folds"])
