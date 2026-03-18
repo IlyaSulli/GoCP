@@ -70,16 +70,18 @@ def features(tree):
     fingerprint = []
     for values in node_metrics:
         arr = np.array(values, dtype=float)
-        fingerprint.extend([
-            float(np.median(arr)),
-            float(np.mean(arr)),
-            float(np.std(arr)),
-            float(np.var(arr)),
-            float(skew(arr)) if len(arr) > 1 else 0.0,
-            float(mode(arr, keepdims=True).mode[0]),
-            float(np.min(arr)),
-            float(np.max(arr)),
-        ])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            fingerprint.extend([
+                float(np.median(arr)),
+                float(np.mean(arr)),
+                float(np.std(arr)),
+                float(np.var(arr)),
+                float(skew(arr)) if len(arr) > 1 else 0.0,
+                float(mode(arr, keepdims=True).mode[0]),
+                float(np.min(arr)),
+                float(np.max(arr)),
+            ])
 
     # Append the 8 graph-level features: total = 56
     fingerprint.extend(graph_features)
