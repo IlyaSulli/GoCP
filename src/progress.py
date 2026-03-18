@@ -1,4 +1,5 @@
 import sys
+import time
 
 
 class ProgressBar:
@@ -10,6 +11,7 @@ class ProgressBar:
         self.counts = {name: 0 for name in counters}
         self._status = ""
         self._has_status = False
+        self._start_time = time.monotonic()
 
     def update(self, counter, amount=1):
         self.counts[counter] = self.counts.get(counter, 0) + amount
@@ -24,9 +26,12 @@ class ProgressBar:
         done = sum(self.counts.values())
         filled = int(self.bar_width * done / self.total) if self.total else self.bar_width
         bar = self.fill_char * filled + self.empty_char * (self.bar_width - filled)
+        elapsed = time.monotonic() - self._start_time
+        minutes, seconds = divmod(int(elapsed), 60)
+        time_str = f"{minutes}:{seconds:02d}"
         stats = "  ".join(f"{name}: {count}" for name, count in self.counts.items())
         # Move to start, clear line, write bar
-        line = f"  {bar} {done}/{self.total}  {stats}"
+        line = f"  {bar} {done}/{self.total}  [{time_str}]  {stats}"
         if self._has_status:
             # Clear both lines: move up if we previously wrote a status line
             sys.stdout.write(f"\r\033[K{line}\n\033[K    {self._status}\033[A")
