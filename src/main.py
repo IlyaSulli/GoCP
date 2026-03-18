@@ -70,7 +70,7 @@ def load_data(data_folder, results_folder, show_errors=False):
                     clone_a = extract_function(source, positions[0], matches)
                     clone_b = extract_function(source, positions[1], matches)
 
-                    manage_clone(clone_a, clone_b)
+                    manage_clone(clone_a, clone_b, progress, filepath)
                     progress.update("Loaded")
                     clone_pair_found = True
                     break
@@ -101,10 +101,10 @@ def extract_function(source, start_pos, all_matches):
     # No next function — take everything to end of file
     return source[start_pos:].rstrip()
 
-def manage_clone(clone_a, clone_b):
-    goc_tree_a = goc(clone_a)
+def manage_clone(clone_a, clone_b, progress=None, filepath=None):
+    goc_tree_a = goc(clone_a, progress, filepath)
     features_a = features(goc_tree_a)
-    goc_tree_b = goc(clone_b)
+    goc_tree_b = goc(clone_b, progress, filepath)
     features_b = features(goc_tree_b)
     
 
