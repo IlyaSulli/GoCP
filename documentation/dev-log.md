@@ -25,3 +25,19 @@
     - "Average : Precision=0.5958  Recall=0.5957  F1=0.5955"
 - Added additional feature vectors to help the model tell how far apart the metrics are. Current stats are 
     - "Average: Precision=0.6399  Recall=0.6282  F1=0.6326"
+- Implemented TF-IDF as the baseline test
+- Tested the program and found that the baseline beats it with TF-IDF having an:
+    - "Average : Precision=0.8308  Recall=0.8197  F1=0.8249"
+- The problem is caused by a small training set and a large number of features. A bigger dataset is needed. Looked into  "Datasets:PoolC/1-fold-clone-detection-600k-5fold" on HuggingFace which contains 600,000 entries which would help a lot for this (uses datasets)
+- Attempted run of 100,000 pairs. Current sats are:
+    - Average : Precision=0.7327  Recall=0.7841  F1=0.7575
+    - TFIDF failed "numpy._core._exceptions._ArrayMemoryError: Unable to allocate 704. KiB for an array with shape (90060,) and data type float64"
+- Working on fix for TFIDF by increasing max_features to 5000
+- Working on fix to improve repetetive training tests by storing the processed pairs
+- Added progress bar to baseline to help with large datasets
+- Added --no-goc argument to allow you to just run the baseline. Added --reprocess argument to force reload the processed clone pairs just in case the data is altered slightly
+- Loading files from cache was loading half quickly but the rest was being lNow uses Pickle cache to load files even quicker.
+- Fixed progress bar for baseline
+- Tested baseline. Results in: Average : Precision=0.9101  Recall=0.8829  F1=0.8963
+- Updated classifier to include similarity feature and feature scaling
+- Tested GoS. Results in: Average : Precision=0.7326  Recall=0.7914  F1=0.7608
