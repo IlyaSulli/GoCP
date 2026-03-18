@@ -3,6 +3,8 @@ import os
 import re
 
 from goc import goc
+from features import features
+from progress import ProgressBar
 
 DEFAULT_DATA_FOLDER = "./data/"
 DEFAULT_RESULTS_FOLDER = "./results/"
@@ -15,6 +17,8 @@ def main():
                         help=f"Path to the data folder (default: {DEFAULT_DATA_FOLDER})")
     parser.add_argument("--results", default=DEFAULT_RESULTS_FOLDER,
                         help=f"Path to the results folder (default: {DEFAULT_RESULTS_FOLDER})")
+    parser.add_argument("--show-errors", action="store_true",
+                        help="Display error details for each failed file")
     args = parser.parse_args()
 
     data_folder = args.data
@@ -26,51 +30,65 @@ def main():
     print(f"Results folder: {results_folder}")
     print(f"----------")
     print(f"Loading data files")
-    load_data(data_folder, results_folder)
+    load_data(data_folder, results_folder, show_errors=args.show_errors)
 
 
-def load_data(data_folder, results_folder):
+def load_data(data_folder, results_folder, show_errors=False):
     # Pattern to match function definitions at any indentation level
     func_def_pattern = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
+    # Collect all .py files first for progress tracking
+    py_files = []
     for root, _, files in os.walk(data_folder):
         for filename in files:
-            if not filename.endswith(".py"):
-                continue
+            if filename.endswith(".py"):
+                py_files.append(os.path.join(root, filename))
 
-            filepath = os.path.join(root, filename)
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    source = f.read()
+    progress = ProgressBar(len(py_files), ["Loaded", "Skipped", "Errors"])
+    error_log = []
 
-                # Find all function definitions and their positions
-                matches = list(func_def_pattern.finditer(source))
+    for filepath in py_files:
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                source = f.read()
 
-                # Group by function name
-                functions_by_name = {}
-                for match in matches:
-                    name = match.group(2)
-                    if name not in functions_by_name:
-                        functions_by_name[name] = []
-                    functions_by_name[name].append(match.start())
+            # Find all function definitions and their positions
+            matches = list(func_def_pattern.finditer(source))
 
-                # Find a function name that appears exactly twice (the clone pair)
-                clone_pair_found = False
-                for func_name, positions in functions_by_name.items():
-                    if len(positions) == 2:
-                        clone_a = extract_function(source, positions[0], matches)
-                        clone_b = extract_function(source, positions[1], matches)
+            # Group by function name
+            functions_by_name = {}
+            for match in matches:
+                name = match.group(2)
+                if name not in functions_by_name:
+                    functions_by_name[name] = []
+                functions_by_name[name].append(match.start())
 
-                        print(f"  [LOADED] {filepath}")
-                        manage_clone(clone_a, clone_b)
-                        clone_pair_found = True
-                        break
+            # Find a function name that appears exactly twice (the clone pair)
+            clone_pair_found = False
+            for func_name, positions in functions_by_name.items():
+                if len(positions) == 2:
+                    clone_a = extract_function(source, positions[0], matches)
+                    clone_b = extract_function(source, positions[1], matches)
 
-                if not clone_pair_found:
-                    print(f"  [SKIPPED] {filepath}: No clone pair found")
+                    manage_clone(clone_a, clone_b)
+                    progress.update("Loaded")
+                    clone_pair_found = True
+                    break
 
-            except Exception as e:
-                print(f"  [ERROR] {filepath}: {e}")
+            if not clone_pair_found:
+                progress.update("Skipped")
+
+        except Exception as e:
+            if show_errors:
+                error_log.append(f"  {filepath}: {e}")
+            progress.update("Errors")
+
+    progress.finish()
+
+    if show_errors and error_log:
+        print("Errors:")
+        for entry in error_log:
+            print(entry)
 
 
 def extract_function(source, start_pos, all_matches):
@@ -85,7 +103,10 @@ def extract_function(source, start_pos, all_matches):
 
 def manage_clone(clone_a, clone_b):
     goc_tree_a = goc(clone_a)
+    features_a = features(goc_tree_a)
     goc_tree_b = goc(clone_b)
+    features_b = features(goc_tree_b)
+    
 
 
 if __name__ == "__main__":
