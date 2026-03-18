@@ -1,5 +1,7 @@
 import os
+import pickle
 import numpy as np
+from scipy import sparse
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import precision_score, recall_score, f1_score
@@ -9,54 +11,53 @@ from progress import ProgressBar
 
 
 def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
-    total_pairs = len(positive_pairs) + len(negative_pairs)
-    prep = ProgressBar(3, ["Done"])
-
-    # Step 1: Load raw function text for each unique function index
-    prep.status("Loading text files...")
     all_indices = set()
     for idx_a, idx_b in positive_pairs + negative_pairs:
         all_indices.add(idx_a)
         all_indices.add(idx_b)
 
-    texts = {}
-    for idx in all_indices:
-        with open(os.path.join(temp_dir, f"func_{idx}.txt"), "r", encoding="utf-8") as f:
-            texts[idx] = f.read()
-    prep.update("Done")
+    # Step 1: Load texts — use single pickle cache if available, else read individual files
+    texts_cache_path = os.path.join(temp_dir, "texts_cache.pkl")
+    if os.path.exists(texts_cache_path):
+        print("  Loading text cache...")
+        with open(texts_cache_path, "rb") as f:
+            texts = pickle.load(f)
+    else:
+        texts = {}
+        load_progress = ProgressBar(len(all_indices), ["Loaded"])
+        load_progress.status("Loading text files...")
+        for idx in all_indices:
+            with open(os.path.join(temp_dir, f"func_{idx}.txt"), "r", encoding="utf-8") as f:
+                texts[idx] = f.read()
+            load_progress.update("Loaded")
+        load_progress.finish()
 
     # Step 2: Fit TF-IDF on all function texts
-    prep.status("Fitting TF-IDF vectorizer...")
-    vectorizer = TfidfVectorizer(analyzer="word", token_pattern=r"[A-Za-z_]\w*|\S", max_features=5000)
-    all_texts = [texts[idx] for idx in sorted(all_indices)]
-    vectorizer.fit(all_texts)
-    prep.update("Done")
+    print("  Fitting TF-IDF vectorizer...")
+    vectorizer = TfidfVectorizer(analyzer="word", token_pattern=r"[A-Za-z_]\w*|\S", max_features=2000)
+    all_idx_list = sorted(all_indices)
+    vectorizer.fit([texts[idx] for idx in all_idx_list])
 
-    # Step 3: Transform all texts and build dataset
-    prep.status(f"Building feature matrix for {total_pairs} pairs...")
-    tfidf_cache = {idx: vectorizer.transform([texts[idx]]).toarray()[0] for idx in all_indices}
+    # Step 3: Transform all texts in one batch — keep sparse to avoid huge dense matrix
+    print("  Building feature matrix...")
+    tfidf_matrix = vectorizer.transform([texts[idx] for idx in all_idx_list])  # sparse (n, 2000)
+    idx_to_row = {idx: i for i, idx in enumerate(all_idx_list)}
 
-    X = []
-    y = []
+    all_pairs = positive_pairs + negative_pairs
+    rows_a = [idx_to_row[a] for a, b in all_pairs]
+    rows_b = [idx_to_row[b] for a, b in all_pairs]
 
-    for idx_a, idx_b in positive_pairs:
-        vec_a, vec_b = tfidf_cache[idx_a], tfidf_cache[idx_b]
-        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
-        y.append(1)
+    mat_a = tfidf_matrix[rows_a]
+    mat_b = tfidf_matrix[rows_b]
+    diff = (mat_a - mat_b)
+    diff.data = np.abs(diff.data)  # abs in-place on sparse data
 
-    for idx_a, idx_b in negative_pairs:
-        vec_a, vec_b = tfidf_cache[idx_a], tfidf_cache[idx_b]
-        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b)]))
-        y.append(0)
-
-    X = np.array(X)
-    y = np.array(y)
-    prep.update("Done")
-    prep.finish()
+    X = sparse.hstack([mat_a, mat_b, diff], format="csr")
+    y = np.array([1] * len(positive_pairs) + [0] * len(negative_pairs))
 
     # 10-fold stratified cross-validation (same splits as GoC for fair comparison)
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
 
     fold_results = []
     progress = ProgressBar(10, ["Folds"])
