@@ -1,6 +1,7 @@
 import warnings
 import networkx as nx
 import numpy as np
+from scipy.stats import skew, mode
 
 def features(tree):
     ## Phase 1:
@@ -55,7 +56,35 @@ def features(tree):
     graph_features = [network_size, total_edges, total_triangles, total_weighted_degree,
                       density, assortativity, transitivity, avg_shortest_path]
 
-    return weighted_degree, eigenvector_centrality, page_rank, two_hop, local_clustering, neighbour_clustering, graph_features
+    ## Phase 3: Reduce node-level metrics to fixed-size statistics
+    # For each of the 6 node metrics, compute 8 stats = 48 features
+    node_metrics = [
+        list(dict(weighted_degree).values()),
+        list(eigenvector_centrality.values()),
+        list(page_rank.values()),
+        list(two_hop.values()),
+        list(local_clustering.values()),
+        list(neighbour_clustering.values()),
+    ]
+
+    fingerprint = []
+    for values in node_metrics:
+        arr = np.array(values, dtype=float)
+        fingerprint.extend([
+            float(np.median(arr)),
+            float(np.mean(arr)),
+            float(np.std(arr)),
+            float(np.var(arr)),
+            float(skew(arr)) if len(arr) > 1 else 0.0,
+            float(mode(arr, keepdims=True).mode[0]),
+            float(np.min(arr)),
+            float(np.max(arr)),
+        ])
+
+    # Append the 8 graph-level features: total = 56
+    fingerprint.extend(graph_features)
+
+    return np.array(fingerprint, dtype=float)
 
 ## Two-Hop Neighbours Algorithm
 # For each node, get its direct neighbours then their neighbours

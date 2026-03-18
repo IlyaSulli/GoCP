@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import warnings
 
 from goc import goc
 from features import features
@@ -72,7 +73,12 @@ def load_data(data_folder, results_folder, show_errors=False):
                         clone_a = extract_function(source, positions[0], matches)
                         clone_b = extract_function(source, positions[1], matches)
 
-                        manage_clone(clone_a, clone_b, progress, filepath)
+                        with warnings.catch_warnings(record=True) as caught:
+                            warnings.simplefilter("always")
+                            manage_clone(clone_a, clone_b, progress, filepath)
+                            if show_errors and caught:
+                                for w in caught:
+                                    error_log.append(f"  {filepath}: {w.category.__name__}: {w.message}")
                         progress.update("Loaded")
                         clone_pair_found = True
                         break
