@@ -29,7 +29,7 @@ def main():
     print(f"Data folder: {data_folder}")
     print(f"Results folder: {results_folder}")
     print(f"----------")
-    print(f"Loading data files")
+    print(f"Processing data files")
     load_data(data_folder, results_folder, show_errors=args.show_errors)
 
 
