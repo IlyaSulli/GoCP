@@ -4,6 +4,7 @@ import re
 
 from goc import goc
 from features import features
+from preprocess import preprocess
 from progress import ProgressBar
 
 DEFAULT_DATA_FOLDER = "./data/"
@@ -47,41 +48,47 @@ def load_data(data_folder, results_folder, show_errors=False):
     progress = ProgressBar(len(py_files), ["Loaded", "Skipped", "Errors"])
     error_log = []
 
-    for filepath in py_files:
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                source = f.read()
+    try:
+        for filepath in py_files:
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    source = preprocess(f.read())
 
-            # Find all function definitions and their positions
-            matches = list(func_def_pattern.finditer(source))
+                # Find all function definitions and their positions
+                matches = list(func_def_pattern.finditer(source))
 
-            # Group by function name
-            functions_by_name = {}
-            for match in matches:
-                name = match.group(2)
-                if name not in functions_by_name:
-                    functions_by_name[name] = []
-                functions_by_name[name].append(match.start())
+                # Group by function name
+                functions_by_name = {}
+                for match in matches:
+                    name = match.group(2)
+                    if name not in functions_by_name:
+                        functions_by_name[name] = []
+                    functions_by_name[name].append(match.start())
 
-            # Find a function name that appears exactly twice (the clone pair)
-            clone_pair_found = False
-            for func_name, positions in functions_by_name.items():
-                if len(positions) == 2:
-                    clone_a = extract_function(source, positions[0], matches)
-                    clone_b = extract_function(source, positions[1], matches)
+                # Find a function name that appears exactly twice (the clone pair)
+                clone_pair_found = False
+                for func_name, positions in functions_by_name.items():
+                    if len(positions) == 2:
+                        clone_a = extract_function(source, positions[0], matches)
+                        clone_b = extract_function(source, positions[1], matches)
 
-                    manage_clone(clone_a, clone_b, progress, filepath)
-                    progress.update("Loaded")
-                    clone_pair_found = True
-                    break
+                        manage_clone(clone_a, clone_b, progress, filepath)
+                        progress.update("Loaded")
+                        clone_pair_found = True
+                        break
 
-            if not clone_pair_found:
-                progress.update("Skipped")
+                if not clone_pair_found:
+                    progress.update("Skipped")
 
-        except Exception as e:
-            if show_errors:
-                error_log.append(f"  {filepath}: {e}")
-            progress.update("Errors")
+            except Exception as e:
+                if show_errors:
+                    error_log.append(f"  {filepath}: {e}")
+                progress.update("Errors")
+    except KeyboardInterrupt:
+        # Handle Ctrl + C exiting to soft stop the program 
+        progress.finish()
+        print("\nInterrupted by user. Exiting.")
+        return
 
     progress.finish()
 
@@ -102,9 +109,9 @@ def extract_function(source, start_pos, all_matches):
     return source[start_pos:].rstrip()
 
 def manage_clone(clone_a, clone_b, progress=None, filepath=None):
-    goc_tree_a = goc(clone_a, progress, filepath)
+    goc_tree_a = goc(clone_a)
     features_a = features(goc_tree_a)
-    goc_tree_b = goc(clone_b, progress, filepath)
+    goc_tree_b = goc(clone_b)
     features_b = features(goc_tree_b)
     
 

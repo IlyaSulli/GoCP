@@ -5,7 +5,10 @@ import numpy as np
 # Weighted Degree, Eigenvector Centrality, Page Rank, Two-Hop Neighbours, Local Clustering Coefficient, Average Clustering Coefficient of Neighbours
 def features(tree):
     weighted_degree = tree.degree(weight="weight")
-    eigenvector_centrality = nx.eigenvector_centrality(tree, weight="weight")
+    try:
+        eigenvector_centrality = nx.eigenvector_centrality(tree, weight="weight", max_iter=1000)
+    except nx.PowerIterationFailedConvergence:
+        eigenvector_centrality = {node: 0.0 for node in tree.nodes()}
     page_rank = nx.pagerank(tree, weight="weight")
     local_clustering = nx.clustering(tree.to_undirected())
     two_hop = twoHop(tree)
