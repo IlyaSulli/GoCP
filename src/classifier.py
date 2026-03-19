@@ -110,3 +110,5 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder):
         writer.writerow(["average", avg_precision, avg_recall, avg_f1])
 
     print(f"Results saved to {output_path}")
+
+    return fold_results

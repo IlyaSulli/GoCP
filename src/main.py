@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 import pickle
@@ -17,7 +18,7 @@ from progress import ProgressBar
 DEFAULT_DATA_FOLDER = "./data/"
 DEFAULT_RESULTS_FOLDER = "./results/"
 TEMP_DIR = "./temp/"
-DEFAULT_SAMPLE = 10000
+DEFAULT_SAMPLE = 200000
 CACHE_FILE = os.path.join(TEMP_DIR, "pairs_cache.json")
 TEXTS_CACHE_FILE = os.path.join(TEMP_DIR, "texts_cache.pkl")
 FEATURES_CACHE_FILE = os.path.join(TEMP_DIR, "features_cache.npz")
@@ -229,13 +230,61 @@ def _process_poolc(sample_size, show_errors):
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 def _run_classifiers(positive_pairs, negative_pairs, results_folder, run_goc, run_baseline):
+    goc_results = None
+    baseline_results = None
+
     if run_goc:
         print("Running GoC classifier...")
-        classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
+        goc_results = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
     if run_baseline:
         from baseline import baseline
         print("Running TF-IDF baseline...")
-        baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
+        baseline_results = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder)
+
+    if goc_results is not None and baseline_results is not None:
+        _statistical_comparison(goc_results, baseline_results, results_folder)
+
+
+def _statistical_comparison(goc_results, baseline_results, results_folder):
+    from scipy.stats import wilcoxon, norm
+
+    goc_f1 = np.array([r[3] for r in goc_results])
+    baseline_f1 = np.array([r[3] for r in baseline_results])
+
+    print(f"\n  --- Statistical Comparison (Wilcoxon Signed-Rank Test) ---")
+    print(f"  GoC avg F1:      {np.mean(goc_f1):.4f}")
+    print(f"  Baseline avg F1: {np.mean(baseline_f1):.4f}")
+
+    stat, p_value, effect_r = None, None, None
+    try:
+        stat, p_value = wilcoxon(goc_f1, baseline_f1, alternative='two-sided')
+        z = abs(norm.ppf(p_value / 2))
+        effect_r = z / np.sqrt(len(goc_f1))
+        print(f"  W={stat:.4f}, p={p_value:.4f}, effect size r={effect_r:.4f}")
+        if p_value < 0.05:
+            better = "GoC" if np.mean(goc_f1) > np.mean(baseline_f1) else "Baseline"
+            print(f"  Statistically significant (p<0.05) — {better} is better")
+        else:
+            print(f"  No statistically significant difference (p={p_value:.4f} >= 0.05)")
+    except Exception as e:
+        print(f"  Wilcoxon test failed: {e}")
+
+    os.makedirs(results_folder, exist_ok=True)
+    output_path = os.path.join(results_folder, "statistical_comparison.csv")
+    with open(output_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["fold", "goc_f1", "baseline_f1", "difference"])
+        for (gfold, _gp, _gr, gf), (_bfold, _bp, _br, bf) in zip(goc_results, baseline_results):
+            writer.writerow([gfold, f"{gf:.4f}", f"{bf:.4f}", f"{gf - bf:.4f}"])
+        writer.writerow([])
+        writer.writerow(["metric", "value"])
+        writer.writerow(["goc_avg_f1", f"{np.mean(goc_f1):.4f}"])
+        writer.writerow(["baseline_avg_f1", f"{np.mean(baseline_f1):.4f}"])
+        if stat is not None:
+            writer.writerow(["wilcoxon_W", f"{stat:.4f}"])
+            writer.writerow(["p_value", f"{p_value:.4f}"])
+            writer.writerow(["effect_size_r", f"{effect_r:.4f}"])
+    print(f"  Saved to {output_path}")
 
 
 def _process_file(filepath):

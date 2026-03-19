@@ -41,3 +41,10 @@
 - Tested baseline. Results in: Average : Precision=0.9101  Recall=0.8829  F1=0.8963
 - Updated classifier to include similarity feature and feature scaling
 - Tested GoS. Results in: Average : Precision=0.7326  Recall=0.7914  F1=0.7608
+- Increasing dataset to 200k to improve stats
+- Added per-fold results to summary view
+- New stats are:
+    - GoC: Average : Precision=0.7427  Recall=0.8013  F1=0.7709
+    - TF-IDF: Average : Precision=0.9212  Recall=0.9060  F1=0.9135
+## 19th March
+- Added statistical comparison to compare the differences between the baseline and GoC
