@@ -10,7 +10,14 @@ import csv
 from progress import ProgressBar
 
 
-def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
+_PYTHON_KEYWORDS_PATTERN = (
+    r"\b(?:False|None|True|and|as|assert|async|await|break|class|continue|"
+    r"def|del|elif|else|except|finally|for|from|global|if|import|in|is|"
+    r"lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b"
+)
+
+
+def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_only=False):
     all_indices = set()
     for idx_a, idx_b in positive_pairs + negative_pairs:
         all_indices.add(idx_a)
@@ -33,8 +40,10 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
         load_progress.finish()
 
     # Step 2: Fit TF-IDF on all function texts
-    print("  Fitting TF-IDF vectorizer...")
-    vectorizer = TfidfVectorizer(analyzer="word", token_pattern=r"[A-Za-z_]\w*|\S", max_features=2000)
+    label = "Keyword-only TF-IDF" if keyword_only else "TF-IDF"
+    token_pattern = _PYTHON_KEYWORDS_PATTERN if keyword_only else r"[A-Za-z_]\w*|\S"
+    print(f"  Fitting {label} vectorizer...")
+    vectorizer = TfidfVectorizer(analyzer="word", token_pattern=token_pattern, max_features=2000)
     all_idx_list = sorted(all_indices)
     vectorizer.fit([texts[idx] for idx in all_idx_list])
 
@@ -61,7 +70,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
 
     fold_results = []
     progress = ProgressBar(10, ["Folds"])
-    progress.status("Starting baseline cross-validation...")
+    progress.status(f"Starting {label} cross-validation...")
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(X, y), start=1):
         X_train, X_test = X[train_idx], X[test_idx]
@@ -90,7 +99,8 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
 
     # Save results to CSV
     os.makedirs(results_folder, exist_ok=True)
-    output_path = os.path.join(results_folder, "baseline_results.csv")
+    filename = "keyword_baseline_results.csv" if keyword_only else "baseline_results.csv"
+    output_path = os.path.join(results_folder, filename)
 
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
