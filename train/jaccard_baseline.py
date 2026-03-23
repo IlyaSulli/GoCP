@@ -1,7 +1,10 @@
 import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+import csv
 import pickle
 import numpy as np
-import csv
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import precision_score, recall_score, f1_score
 from progress import ProgressBar
@@ -17,8 +20,7 @@ def _jaccard(text_a, text_b):
     return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
 
 
-def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
-    # Load texts
+def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None):
     texts_cache_path = os.path.join(temp_dir, "texts_cache.pkl")
     if os.path.exists(texts_cache_path):
         print("  Loading text cache...")
@@ -34,13 +36,11 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
             with open(os.path.join(temp_dir, f"func_{idx}.txt"), "r", encoding="utf-8") as f:
                 texts[idx] = f.read()
 
-    # Compute Jaccard similarity for every pair
     print("  Computing Jaccard similarities...")
     all_pairs = positive_pairs + negative_pairs
     y = np.array([1] * len(positive_pairs) + [0] * len(negative_pairs))
     similarities = np.array([_jaccard(texts[a], texts[b]) for a, b in all_pairs])
 
-    # 10-fold stratified CV — find optimal threshold on training fold, apply to test fold
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     thresholds = np.arange(0.0, 1.01, 0.01)
 
@@ -52,7 +52,6 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
         sim_train, y_train = similarities[train_idx], y[train_idx]
         sim_test, y_test = similarities[test_idx], y[test_idx]
 
-        # Vectorised threshold search on training fold
         best_threshold, best_f1 = 0.5, -1.0
         for t in thresholds:
             f1 = f1_score(y_train, (sim_train >= t).astype(int), zero_division=0)
@@ -69,10 +68,17 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
 
     progress.finish()
 
-    avg_precision = np.mean([r[1] for r in fold_results])
-    avg_recall = np.mean([r[2] for r in fold_results])
-    avg_f1 = np.mean([r[3] for r in fold_results])
+    # Find the best threshold on the full dataset (all similarities pooled)
+    best_overall_threshold, best_overall_f1 = 0.5, -1.0
+    for t in thresholds:
+        f1 = f1_score(y, (similarities >= t).astype(int), zero_division=0)
+        if f1 > best_overall_f1:
+            best_overall_f1, best_overall_threshold = f1, t
+    print(f"  Optimal threshold (F1={best_overall_f1:.4f}): {best_overall_threshold:.2f}")
 
+    avg_precision = np.mean([r[1] for r in fold_results])
+    avg_recall    = np.mean([r[2] for r in fold_results])
+    avg_f1        = np.mean([r[3] for r in fold_results])
     print(f"  {'Average':8s}: Precision={avg_precision:.4f}  Recall={avg_recall:.4f}  F1={avg_f1:.4f}")
 
     os.makedirs(results_folder, exist_ok=True)
@@ -83,6 +89,13 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder):
         for row in fold_results:
             writer.writerow(row)
         writer.writerow(["average", avg_precision, avg_recall, avg_f1])
-
     print(f"Results saved to {output_path}")
+
+    if models_folder:
+        import joblib
+        os.makedirs(models_folder, exist_ok=True)
+        model_path = os.path.join(models_folder, "jaccard_model.joblib")
+        joblib.dump({"threshold": best_overall_threshold}, model_path)
+        print(f"  Saved to {model_path}")
+
     return fold_results
