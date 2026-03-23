@@ -8,9 +8,9 @@ from streamlit_ace import st_ace
 from scanner import extract_functions
 from predictor import available_methods, predict
 
-st.set_page_config(page_title="Code Clone Detector (C2D)", layout="wide")
+st.set_page_config(page_title="GoCP — Graph-of-Code Python", layout="wide")
 
-st.title("Code Clone Detector (C2D)")
+st.title("GoCP — Graph-of-Code Python")
 st.caption("Paste two Python functions below and select a detection method.")
 
 # ── Method selector ────────────────────────────────────────────────────────────
