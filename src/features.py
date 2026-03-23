@@ -39,6 +39,8 @@ def features(tree):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             assortativity = nx.degree_assortativity_coefficient(tree)
+        if not np.isfinite(assortativity):
+            assortativity = 0.0
     except Exception:
         assortativity = 0.0
 
