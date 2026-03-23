@@ -48,3 +48,13 @@
     - TF-IDF: Average : Precision=0.9212  Recall=0.9060  F1=0.9135
 ## 19th March
 - Added statistical comparison to compare the differences between the baseline and GoC
+- Testing the functions, results in extremely inaccurate results for GoC, further testing will be needed
+- Additional refinements were done to GoC to add control edges for the features to improve reliability
+- Added the ability to save model for faster testing
+- Reduced model size to 20,000
+- Added tests to evaluate the performance of the models
+- Made a GUI to allow testing clone predictions on two functions
+- Refined the threshold to be 0.6
+- Final testing shows that GoC is best at type 1,2,3 functions but struggles with type 4 due to how the tree structure and the relationships are not close to each other. This is an inherent flaw with using GoC. With refinement, I was able to reduce the false positives to be 70% accurate.
+- Creating model of 100,000 to check for performance differences in the models
+- Updated model tested and found to be better for negative results
