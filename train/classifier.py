@@ -1,4 +1,8 @@
 import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+import csv
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
@@ -6,7 +10,6 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import canberra, cosine
 from scipy.stats import pearsonr
-import csv
 from progress import ProgressBar
 
 
@@ -28,10 +31,7 @@ def _similarity_features(vec_a, vec_b):
     return np.array([canberra_dist, cosine_dist, euclidean_dist, corr])
 
 
-def classify(positive_pairs, negative_pairs, temp_dir, results_folder):
-    # Build dataset: 168 structural features + 4 similarity metrics = 172 features
-
-    # Load all feature vectors — use single cache file if available
+def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None):
     features_cache_path = os.path.join(temp_dir, "features_cache.npz")
     if os.path.exists(features_cache_path):
         print("  Loading features cache...")
@@ -43,15 +43,12 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder):
             v = np.load(os.path.join(temp_dir, f"func_{idx}.npy"))
             return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
 
-    X = []
-    y = []
-
+    X, y = [], []
     for idx_a, idx_b in positive_pairs:
         vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
         sim = _similarity_features(vec_a, vec_b)
         X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
         y.append(1)
-
     for idx_a, idx_b in negative_pairs:
         vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
         sim = _similarity_features(vec_a, vec_b)
@@ -61,54 +58,64 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder):
     X = np.array(X)
     y = np.array(y)
 
-    # Scale features so large-magnitude features don't dominate |A-B|
+    # Scaler fitted on ALL data — also used for the saved final model
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    # 10-fold stratified cross-validation
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
 
     fold_results = []
+    oof_probs = np.zeros(len(y))
     progress = ProgressBar(10, ["Folds"])
     progress.status("Starting cross-validation...")
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(X, y), start=1):
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-
         progress.status(f"Fold {fold}/10: Training...")
-        clf.fit(X_train, y_train)
-
+        clf.fit(X[train_idx], y[train_idx])
         progress.status(f"Fold {fold}/10: Evaluating...")
-        y_pred = clf.predict(X_test)
-
-        precision = precision_score(y_test, y_pred, zero_division=0)
-        recall = recall_score(y_test, y_pred, zero_division=0)
-        f1 = f1_score(y_test, y_pred, zero_division=0)
-
+        probs = clf.predict_proba(X[test_idx])[:, 1]
+        oof_probs[test_idx] = probs
+        y_pred = (probs >= 0.5).astype(int)
+        precision = precision_score(y[test_idx], y_pred, zero_division=0)
+        recall    = recall_score(y[test_idx], y_pred, zero_division=0)
+        f1        = f1_score(y[test_idx], y_pred, zero_division=0)
         fold_results.append((fold, precision, recall, f1))
         progress.update("Folds")
 
     progress.finish()
 
-    avg_precision = np.mean([r[1] for r in fold_results])
-    avg_recall = np.mean([r[2] for r in fold_results])
-    avg_f1 = np.mean([r[3] for r in fold_results])
+    # Find the threshold that maximises F1 on the pooled OOF probabilities
+    best_threshold, best_f1 = 0.5, -1.0
+    for t in np.arange(0.0, 1.01, 0.01):
+        f1 = f1_score(y, (oof_probs >= t).astype(int), zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_threshold = f1, t
+    print(f"  Optimal threshold (OOF F1={best_f1:.4f}): {best_threshold:.2f}")
 
+    avg_precision = np.mean([r[1] for r in fold_results])
+    avg_recall    = np.mean([r[2] for r in fold_results])
+    avg_f1        = np.mean([r[3] for r in fold_results])
     print(f"  {'Average':8s}: Precision={avg_precision:.4f}  Recall={avg_recall:.4f}  F1={avg_f1:.4f}")
 
-    # Save results to CSV
     os.makedirs(results_folder, exist_ok=True)
     output_path = os.path.join(results_folder, "gocp_results.csv")
-
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["fold", "precision", "recall", "f1"])
         for row in fold_results:
             writer.writerow(row)
         writer.writerow(["average", avg_precision, avg_recall, avg_f1])
-
     print(f"Results saved to {output_path}")
+
+    if models_folder:
+        import joblib
+        os.makedirs(models_folder, exist_ok=True)
+        print("  Training final GoC model on all data...")
+        final_clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
+        final_clf.fit(X, y)  # X is already scaled by scaler above
+        model_path = os.path.join(models_folder, "goc_model.joblib")
+        joblib.dump({"scaler": scaler, "clf": final_clf, "threshold": best_threshold}, model_path)
+        print(f"  Saved to {model_path}")
 
     return fold_results

@@ -1,7 +1,10 @@
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 import argparse
 import csv
 import json
-import os
 import pickle
 import random
 import re
@@ -15,15 +18,19 @@ from goc import goc
 from features import features
 from preprocess import preprocess
 from classifier import classify
+from baseline import baseline
+from jaccard_baseline import jaccard_baseline
 from progress import ProgressBar
 
-DEFAULT_DATA_FOLDER   = "./data/"
-DEFAULT_RESULTS_FOLDER = "./results/"
-TEMP_DIR              = "./temp/"
-DEFAULT_SAMPLE        = 200000
 
-CACHE_FILE         = os.path.join(TEMP_DIR, "pairs_cache.json")
-TEXTS_CACHE_FILE   = os.path.join(TEMP_DIR, "texts_cache.pkl")
+DEFAULT_DATA_FOLDER    = "./data/"
+DEFAULT_RESULTS_FOLDER = "./results/"
+DEFAULT_MODELS_FOLDER  = "./models/"
+TEMP_DIR               = "./temp/"
+DEFAULT_SAMPLE         = 20000
+
+CACHE_FILE          = os.path.join(TEMP_DIR, "pairs_cache.json")
+TEXTS_CACHE_FILE    = os.path.join(TEMP_DIR, "texts_cache.pkl")
 FEATURES_CACHE_FILE = os.path.join(TEMP_DIR, "features_cache.npz")
 
 _FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
@@ -31,12 +38,13 @@ _FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
 @dataclass
 class RunOptions:
-    run_goc:             bool = True
-    run_baseline:        bool = False
+    run_goc:              bool = True
+    run_baseline:         bool = False
     run_keyword_baseline: bool = False
-    run_jaccard:         bool = False
-    show_errors:         bool = False
-    reprocess:           bool = False
+    run_jaccard:          bool = False
+    show_errors:          bool = False
+    reprocess:            bool = False
+    save_models:          bool = False
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -47,16 +55,19 @@ def main():
                         help=f"Path to the data folder (default: {DEFAULT_DATA_FOLDER})")
     parser.add_argument("--results", default=DEFAULT_RESULTS_FOLDER,
                         help=f"Path to the results folder (default: {DEFAULT_RESULTS_FOLDER})")
+    parser.add_argument("--models",  default=DEFAULT_MODELS_FOLDER,
+                        help=f"Path to save trained models (default: {DEFAULT_MODELS_FOLDER})")
     parser.add_argument("--poolc",   action="store_true",
                         help="Load data from the PoolC Hugging Face dataset")
     parser.add_argument("--sample",  type=int, default=DEFAULT_SAMPLE,
                         help=f"Number of pairs to sample when using --poolc (default: {DEFAULT_SAMPLE})")
-    parser.add_argument("--no-goc",          action="store_true", help="Skip the GoC classifier")
-    parser.add_argument("--baseline",        action="store_true", help="Run TF-IDF baseline")
-    parser.add_argument("--keyword-baseline",action="store_true", help="Run keyword-only TF-IDF baseline")
-    parser.add_argument("--jaccard",         action="store_true", help="Run Jaccard similarity baseline")
-    parser.add_argument("--show-errors",     action="store_true", help="Print details for failed files")
-    parser.add_argument("--reprocess",       action="store_true", help="Force reprocessing of cached data")
+    parser.add_argument("--no-goc",           action="store_true", help="Skip the GoC classifier")
+    parser.add_argument("--baseline",         action="store_true", help="Run TF-IDF baseline")
+    parser.add_argument("--keyword-baseline", action="store_true", help="Run keyword-only TF-IDF baseline")
+    parser.add_argument("--jaccard",          action="store_true", help="Run Jaccard similarity baseline")
+    parser.add_argument("--show-errors",      action="store_true", help="Print details for failed files")
+    parser.add_argument("--reprocess",        action="store_true", help="Force reprocessing of cached data")
+    parser.add_argument("--save-models",      action="store_true", help="Save trained models to --models folder")
     args = parser.parse_args()
 
     opts = RunOptions(
@@ -66,7 +77,10 @@ def main():
         run_jaccard=args.jaccard,
         show_errors=args.show_errors,
         reprocess=args.reprocess,
+        save_models=args.save_models,
     )
+
+    models_folder = args.models if opts.save_models else None
 
     print("----------")
     if args.poolc:
@@ -75,17 +89,19 @@ def main():
     else:
         print(f"Dataset: {args.data}")
     print(f"Results folder: {args.results}")
+    if models_folder:
+        print(f"Models folder:  {models_folder}")
     print("----------")
 
     if args.poolc:
-        run_poolc(args.results, args.sample, opts)
+        run_poolc(args.results, models_folder, args.sample, opts)
     else:
-        run_local(args.data, args.results, opts)
+        run_local(args.data, args.results, models_folder, opts)
 
 
 # ── Local folder mode (SemanticCloneBench) ────────────────────────────────────
 
-def run_local(data_folder, results_folder, opts: RunOptions):
+def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
     py_files = [
         os.path.join(root, f)
         for root, _, files in os.walk(data_folder)
@@ -130,13 +146,13 @@ def run_local(data_folder, results_folder, opts: RunOptions):
     negative_pairs = _generate_negative_pairs(positive_pairs, func_index[0], len(positive_pairs))
     print(f"Generating {len(negative_pairs)} negative pairs")
 
-    _run_classifiers(positive_pairs, negative_pairs, results_folder, opts)
+    _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts)
     shutil.rmtree(TEMP_DIR, ignore_errors=True)
 
 
 # ── PoolC (Hugging Face) mode ─────────────────────────────────────────────────
 
-def run_poolc(results_folder, sample_size, opts: RunOptions):
+def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     if not opts.reprocess and os.path.exists(CACHE_FILE):
         with open(CACHE_FILE) as f:
             cache = json.load(f)
@@ -144,7 +160,7 @@ def run_poolc(results_folder, sample_size, opts: RunOptions):
             positive_pairs = [tuple(p) for p in cache["positive_pairs"]]
             negative_pairs = [tuple(p) for p in cache["negative_pairs"]]
             print(f"Loaded from cache: {len(positive_pairs)} positive, {len(negative_pairs)} negative pairs")
-            _run_classifiers(positive_pairs, negative_pairs, results_folder, opts)
+            _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts)
             return
         print(f"Cache sample size mismatch ({cache.get('sample_size')} vs {sample_size}) — reprocessing")
 
@@ -155,7 +171,7 @@ def run_poolc(results_folder, sample_size, opts: RunOptions):
                    "positive_pairs": positive_pairs,
                    "negative_pairs": negative_pairs}, f)
 
-    _run_classifiers(positive_pairs, negative_pairs, results_folder, opts)
+    _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts)
 
 
 def _process_poolc(sample_size, show_errors):
@@ -230,20 +246,17 @@ def _process_poolc(sample_size, show_errors):
 
 # ── Classifiers and comparisons ───────────────────────────────────────────────
 
-def _run_classifiers(positive_pairs, negative_pairs, results_folder, opts: RunOptions):
-    from baseline import baseline
-    from jaccard_baseline import jaccard_baseline
-
-    goc_results      = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder)      if opts.run_goc             else None
-    full_tfidf       = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder)      if opts.run_baseline        else None
-    keyword_tfidf    = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, keyword_only=True) if opts.run_keyword_baseline else None
-    jaccard_results  = jaccard_baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder) if opts.run_jaccard      else None
+def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts: RunOptions):
+    goc_results     = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder)          if opts.run_goc             else None
+    full_tfidf      = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder=models_folder) if opts.run_baseline        else None
+    keyword_tfidf   = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, keyword_only=True, models_folder=models_folder) if opts.run_keyword_baseline else None
+    jaccard_results = jaccard_baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder)  if opts.run_jaccard         else None
 
     comparisons = [
-        (goc_results,   full_tfidf,      "GoC",          "TF-IDF (full)",          "statistical_comparison.csv"),
-        (goc_results,   keyword_tfidf,   "GoC",          "TF-IDF (keywords only)", "statistical_comparison_keyword.csv"),
-        (goc_results,   jaccard_results, "GoC",          "Jaccard",                "statistical_comparison_jaccard.csv"),
-        (full_tfidf,    keyword_tfidf,   "TF-IDF (full)","TF-IDF (keywords only)", "statistical_comparison_tfidf_vs_keyword.csv"),
+        (goc_results,   full_tfidf,    "GoC",          "TF-IDF (full)",          "statistical_comparison.csv"),
+        (goc_results,   keyword_tfidf, "GoC",          "TF-IDF (keywords only)", "statistical_comparison_keyword.csv"),
+        (goc_results,   jaccard_results,"GoC",          "Jaccard",                "statistical_comparison_jaccard.csv"),
+        (full_tfidf,    keyword_tfidf, "TF-IDF (full)","TF-IDF (keywords only)", "statistical_comparison_tfidf_vs_keyword.csv"),
     ]
 
     for results_a, results_b, label_a, label_b, filename in comparisons:
