@@ -84,9 +84,20 @@ Runs all available models against 50 hand-crafted test cases (10 per clone type)
 
 ## Screenshots
 
+### Model Training
+
 <img width="3680" height="1792" alt="terminal" src="https://github.com/user-attachments/assets/97e5af4e-0146-4a51-886f-e6dfc0b746fa" />
 
-<img width="3840" height="2160" alt="Screenshot 2026-03-24 101851" src="https://github.com/user-attachments/assets/ee21d94d-697d-4ea4-8c26-f2afebb91a11" />
+### Type 4 Functions
+The following functions have slightly different graphcial representations but serves the same function. It has correctly identified that they **ARE** clone functions 
+
 <img width="3840" height="2160" alt="Screenshot 2026-03-24 102047" src="https://github.com/user-attachments/assets/23b7023d-95d0-4593-ad97-f575ce6a6ffc" />
+
+### Similar Functions
+
+The following functions have a similar graphical representation but is not the same function. It has correctly identified that they are **NOT** clone functions
+
+<img width="3840" height="2160" alt="Screenshot 2026-03-24 101851" src="https://github.com/user-attachments/assets/ee21d94d-697d-4ea4-8c26-f2afebb91a11" />
+
 
 
