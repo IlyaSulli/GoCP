@@ -79,3 +79,14 @@ Runs all available models against 50 hand-crafted test cases (10 per clone type)
 | [`manual.md`](manual.md) | Full usage guide — installation, app, training, evaluation, troubleshooting |
 | [`replication.md`](replication.md) | Step-by-step instructions to reproduce the reported results |
 | [`requirements.txt`](requirements.txt) | Python dependencies with pinned versions |
+
+---
+
+## Screenshots
+
+<img width="3680" height="1792" alt="terminal" src="https://github.com/user-attachments/assets/97e5af4e-0146-4a51-886f-e6dfc0b746fa" />
+
+<img width="3840" height="2160" alt="Screenshot 2026-03-24 101851" src="https://github.com/user-attachments/assets/ee21d94d-697d-4ea4-8c26-f2afebb91a11" />
+<img width="3840" height="2160" alt="Screenshot 2026-03-24 102047" src="https://github.com/user-attachments/assets/23b7023d-95d0-4593-ad97-f575ce6a6ffc" />
+
+
