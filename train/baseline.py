@@ -67,7 +67,6 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
     clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
 
     fold_results = []
-    oof_probs = np.zeros(len(y))
     progress = ProgressBar(10, ["Folds"])
     progress.status(f"Starting {label} cross-validation...")
 
@@ -76,7 +75,6 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
         clf.fit(X[train_idx], y[train_idx])
         progress.status(f"Fold {fold}/10: Evaluating...")
         probs = clf.predict_proba(X[test_idx])[:, 1]
-        oof_probs[test_idx] = probs
         y_pred = (probs >= 0.5).astype(int)
         precision = precision_score(y[test_idx], y_pred, zero_division=0)
         recall    = recall_score(y[test_idx], y_pred, zero_division=0)
@@ -86,13 +84,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
 
     progress.finish()
 
-    # Find the threshold that maximises F1 on the pooled OOF probabilities
-    best_threshold, best_f1 = 0.5, -1.0
-    for t in np.arange(0.0, 1.01, 0.01):
-        f1 = f1_score(y, (oof_probs >= t).astype(int), zero_division=0)
-        if f1 > best_f1:
-            best_f1, best_threshold = f1, t
-    print(f"  Optimal threshold (OOF F1={best_f1:.4f}): {best_threshold:.2f}")
+    best_threshold = 0.6
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])

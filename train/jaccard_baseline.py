@@ -68,13 +68,7 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, m
 
     progress.finish()
 
-    # Find the best threshold on the full dataset (all similarities pooled)
-    best_overall_threshold, best_overall_f1 = 0.5, -1.0
-    for t in thresholds:
-        f1 = f1_score(y, (similarities >= t).astype(int), zero_division=0)
-        if f1 > best_overall_f1:
-            best_overall_f1, best_overall_threshold = f1, t
-    print(f"  Optimal threshold (F1={best_overall_f1:.4f}): {best_overall_threshold:.2f}")
+    best_overall_threshold = 0.6
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])
