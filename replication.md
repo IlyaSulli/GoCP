@@ -42,7 +42,7 @@ del temp\features_cache.npz
 ### Step 2 — Run training
 
 ```bash
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --sample 200000
+python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard --sample 200000
 ```
 
 This will:
@@ -56,7 +56,7 @@ This will:
 To use a fixed 0.5 threshold instead of learning it, add `--fixed-threshold`:
 
 ```bash
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --sample 200000 --fixed-threshold
+python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard --sample 200000 --fixed-threshold
 ```
 
 > **Note:** The first run downloads and processes the dataset. Subsequent runs reuse the cache in `temp/` and are significantly faster.
@@ -108,7 +108,7 @@ To replicate a smaller run (e.g. for a faster test):
 
 ```bash
 rm temp/features_cache.npz   # or del on Windows
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard -n 10000
+python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard -n 10000
 ```
 
 Results will differ from the reported values but the relative ordering of methods should remain consistent.

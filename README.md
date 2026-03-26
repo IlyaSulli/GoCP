@@ -56,7 +56,7 @@ The app opens at `http://localhost:8501`. Paste two Python functions, select a m
 
 ```bash
 # Retrain all models on 200,000 pairs
-python train/main.py --poolc -n 200000 --save-models --baseline --keyword-baseline --jaccard
+python train/main.py --poolc -n 200000 --save-models --tfidf --tfidf-keywords --jaccard
 
 # Use a fixed 0.5 threshold instead of learning it from the validation set
 python train/main.py --poolc -n 200000 --save-models --fixed-threshold

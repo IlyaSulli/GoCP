@@ -118,7 +118,7 @@ python -m streamlit run app/app.py
 To retrain all models from scratch using the PoolC dataset (requires an internet connection to download from Hugging Face):
 
 ```bash
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard
+python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard
 ```
 
 **Data source options:**
@@ -134,9 +134,9 @@ python train/main.py --poolc --save-models --baseline --keyword-baseline --jacca
 | Flag | Description |
 |---|---|
 | `--no-goc` | Skip the GoCP classifier |
-| `--baseline` | Train the TF-IDF (full) model |
-| `--keyword-baseline` | Train the TF-IDF (keywords only) model |
-| `--jaccard` | Train the Jaccard baseline |
+| `--tfidf` | Train the TF-IDF (full tokens) model |
+| `--tfidf-keywords` | Train the TF-IDF (keywords only) model |
+| `--jaccard` | Train the Jaccard similarity baseline |
 
 **Output options:**
 
@@ -163,13 +163,13 @@ python train/main.py --poolc --save-models -n 50000
 **Example — retrain all models, forcing reprocessing:**
 
 ```bash
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --reprocess
+python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard --reprocess
 ```
 
 **Example — retrain with a fixed 0.5 threshold:**
 
 ```bash
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --fixed-threshold
+python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard --fixed-threshold
 ```
 
 > **Note:** If you change the dataset size, delete `temp/features_cache.npz` first. Otherwise the cached features from the previous run will be reused regardless of `--sample`.

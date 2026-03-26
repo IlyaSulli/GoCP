@@ -20,7 +20,7 @@ from preprocess import preprocess
 from classifier import classify
 from baseline import baseline
 from jaccard_baseline import jaccard_baseline
-from progress import ProgressBar
+from progress import Pipeline, ProgressBar
 
 
 DEFAULT_DATA_FOLDER    = "./data/"
@@ -38,10 +38,10 @@ _FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
 @dataclass
 class RunOptions:
-    run_goc:              bool = True
-    run_baseline:         bool = False
-    run_keyword_baseline: bool = False
-    run_jaccard:          bool = False
+    run_goc:           bool = True
+    run_tfidf:         bool = False
+    run_tfidf_keywords: bool = False
+    run_jaccard:       bool = False
     show_errors:          bool = False
     reprocess:            bool = False
     save_models:          bool = False
@@ -57,7 +57,7 @@ def main():
         epilog=(
             "examples:\n"
             "  python train/main.py --poolc --sample 200000 --save-models\n"
-            "  python train/main.py --poolc --sample 200000 --save-models --baseline --keyword-baseline --jaccard\n"
+            "  python train/main.py --poolc --sample 200000 --save-models --tfidf --tfidf-keywords --jaccard\n"
             "  python train/main.py --data ./data --save-models --fixed-threshold\n"
         ),
     )
@@ -73,10 +73,10 @@ def main():
     methods_group = parser.add_argument_group("methods")
     methods_group.add_argument("--no-goc", action="store_true",
                                help="skip the GoCP classifier")
-    methods_group.add_argument("--baseline", action="store_true",
-                               help="run TF-IDF (full) baseline")
-    methods_group.add_argument("--keyword-baseline", action="store_true",
-                               help="run TF-IDF (keywords only) baseline")
+    methods_group.add_argument("--tfidf", action="store_true",
+                               help="run TF-IDF (full tokens) comparison")
+    methods_group.add_argument("--tfidf-keywords", action="store_true",
+                               help="run TF-IDF (keywords only) comparison")
     methods_group.add_argument("--jaccard", action="store_true",
                                help="run Jaccard similarity baseline")
 
@@ -100,8 +100,8 @@ def main():
 
     opts = RunOptions(
         run_goc=not args.no_goc,
-        run_baseline=args.baseline,
-        run_keyword_baseline=args.keyword_baseline,
+        run_tfidf=args.tfidf,
+        run_tfidf_keywords=args.tfidf_keywords,
         run_jaccard=args.jaccard,
         show_errors=args.show_errors,
         reprocess=args.reprocess,
@@ -110,17 +110,6 @@ def main():
     )
 
     models_folder = args.models if opts.save_models else None
-
-    print("----------")
-    if args.poolc:
-        print(f"Dataset: PoolC (Hugging Face)")
-        print(f"Sample size: {args.sample} pairs ({args.sample // 2} positive, {args.sample // 2} negative)")
-    else:
-        print(f"Dataset: {args.data}")
-    print(f"Results folder: {args.results}")
-    if models_folder:
-        print(f"Models folder:  {models_folder}")
-    print("----------")
 
     if args.poolc:
         run_poolc(args.results, models_folder, args.sample, opts)
@@ -137,10 +126,22 @@ def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
         for f in files if f.endswith(".py")
     ]
 
-    print(f"Processing {len(py_files)} files")
     os.makedirs(TEMP_DIR, exist_ok=True)
 
-    progress = ProgressBar(len(py_files), ["Loaded", "Skipped", "Errors"])
+    steps = ["Load local dataset"]
+    if opts.run_goc:
+        steps.append("Train GoCP")
+    if opts.run_tfidf:
+        steps.append("Train TF-IDF (Full)")
+    if opts.run_tfidf_keywords:
+        steps.append("Train TF-IDF (Keywords)")
+    if opts.run_jaccard:
+        steps.append("Train Jaccard")
+
+    pipeline = Pipeline(steps)
+    pipeline.begin("Load local dataset", len(py_files), ["Loaded", "Errors"])
+    pipeline.status(f"Loading {len(py_files)} Python files...")
+
     error_log = []
     positive_pairs = []
     func_index = [0]
@@ -153,61 +154,109 @@ def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
                 try:
                     result = future.result()
                     if result is None:
-                        progress.update("Skipped")
+                        pipeline.update("Loaded")
                     else:
                         feat_a, feat_b, text_a, text_b = result
                         idx_a, idx_b = _save_pair(feat_a, feat_b, text_a, text_b, func_index)
                         positive_pairs.append((idx_a, idx_b))
-                        progress.update("Loaded")
+                        pipeline.update("Loaded")
                 except Exception as e:
                     if opts.show_errors:
                         error_log.append(f"  {filepath}: {e}")
-                    progress.update("Errors")
+                    pipeline.update("Errors")
     except KeyboardInterrupt:
-        progress.finish()
+        pipeline.finish()
+        pipeline.complete()
         print("\nInterrupted. Exiting.")
         shutil.rmtree(TEMP_DIR, ignore_errors=True)
         return
 
-    progress.finish()
-    _print_errors(error_log, opts.show_errors)
+    pipeline.finish()
 
     negative_pairs = _generate_negative_pairs(positive_pairs, func_index[0], len(positive_pairs))
-    print(f"Generating {len(negative_pairs)} negative pairs")
 
-    _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts)
+    results = _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts, pipeline)
+
+    pipeline.complete()
+
+    dataset_info = [
+        f"Dataset: {data_folder}",
+        f"Files processed: {len(py_files)}",
+        f"Positive pairs: {len(positive_pairs)}  Negative pairs: {len(negative_pairs)}",
+    ]
+    _print_summary(dataset_info, results, results_folder, models_folder)
+
+    if opts.show_errors and error_log:
+        print("Errors:")
+        for entry in error_log:
+            print(entry)
+
+    _run_comparisons(results, results_folder)
     shutil.rmtree(TEMP_DIR, ignore_errors=True)
 
 
 # ── PoolC (Hugging Face) mode ─────────────────────────────────────────────────
 
 def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
+    # Determine if the pairs cache is usable
+    using_cache = False
+    cache = None
     if not opts.reprocess and os.path.exists(CACHE_FILE):
         with open(CACHE_FILE) as f:
             cache = json.load(f)
         if cache.get("sample_size") == sample_size:
-            positive_pairs = [tuple(p) for p in cache["positive_pairs"]]
-            negative_pairs = [tuple(p) for p in cache["negative_pairs"]]
-            print(f"Loaded from cache: {len(positive_pairs)} positive, {len(negative_pairs)} negative pairs")
-            _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts)
-            return
-        print(f"Cache sample size mismatch ({cache.get('sample_size')} vs {sample_size}) — reprocessing")
+            using_cache = True
+        else:
+            print(f"Cache sample size mismatch ({cache.get('sample_size')} vs {sample_size}) — reprocessing")
 
-    positive_pairs, negative_pairs = _process_poolc(sample_size, opts.show_errors)
- 
-    with open(CACHE_FILE, "w") as f:
-        json.dump({"sample_size": sample_size,
-                   "positive_pairs": positive_pairs,
-                   "negative_pairs": negative_pairs}, f)
+    steps = []
+    if not using_cache:
+        steps.append("Stream PoolC dataset")
+    if opts.run_goc:
+        steps.append("Train GoCP")
+    if opts.run_tfidf:
+        steps.append("Train TF-IDF (Full)")
+    if opts.run_tfidf_keywords:
+        steps.append("Train TF-IDF (Keywords)")
+    if opts.run_jaccard:
+        steps.append("Train Jaccard")
 
-    _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts)
+    pipeline = Pipeline(steps)
+
+    error_count = 0
+    if using_cache:
+        positive_pairs = [tuple(p) for p in cache["positive_pairs"]]
+        negative_pairs = [tuple(p) for p in cache["negative_pairs"]]
+    else:
+        positive_pairs, negative_pairs, error_count = _process_poolc(sample_size, opts.show_errors, pipeline)
+        with open(CACHE_FILE, "w") as f:
+            json.dump({"sample_size": sample_size,
+                       "positive_pairs": positive_pairs,
+                       "negative_pairs": negative_pairs}, f)
+
+    results = _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts, pipeline)
+
+    pipeline.complete()
+
+    dataset_info = [
+        f"Dataset:     PoolC (Hugging Face)",
+        f"Sample size: {sample_size} pairs  ({sample_size // 2} positive, {sample_size // 2} negative)",
+    ]
+    if error_count:
+        real_total = len(positive_pairs) + len(negative_pairs)
+        dataset_info.append(f"Processed:   {real_total} pairs  ({error_count} failed)")
+
+    _print_summary(dataset_info, results, results_folder, models_folder)
+    _run_comparisons(results, results_folder)
 
 
-def _process_poolc(sample_size, show_errors):
+def _process_poolc(sample_size, show_errors, pipeline):
     from datasets import load_dataset
 
     half = sample_size // 2
-    print("Streaming PoolC dataset from Hugging Face...")
+    pipeline.begin("Stream PoolC dataset", sample_size, ["Pairs"])
+    pipeline.status("Streaming PoolC dataset from Hugging Face...")
+
     dataset = load_dataset("PoolC/1-fold-clone-detection-600k-5fold", split="train", streaming=True)
 
     pairs_raw = []
@@ -222,10 +271,9 @@ def _process_poolc(sample_size, show_errors):
         if pos_count >= half and neg_count >= half:
             break
 
-    print(f"Sampled {len(pairs_raw)} pairs — processing")
+    pipeline.status(f"Processing {len(pairs_raw)} pairs...")
     os.makedirs(TEMP_DIR, exist_ok=True)
 
-    progress = ProgressBar(len(pairs_raw), ["Loaded", "Errors"])
     error_log = []
     labeled_pairs = []
     texts = {}
@@ -249,57 +297,88 @@ def _process_poolc(sample_size, show_errors):
                     feature_vecs[idx_a] = feat_a
                     feature_vecs[idx_b] = feat_b
                     labeled_pairs.append((idx_a, idx_b, label))
-                    progress.update("Loaded")
+                    pipeline.update("Pairs")
                 except Exception as e:
                     if show_errors:
                         error_log.append(f"  pair {i}: {e}")
-                    progress.update("Errors")
+                    pipeline.update("Pairs")
     except KeyboardInterrupt:
-        progress.finish()
+        pipeline.finish()
+        pipeline.complete()
         print("\nInterrupted. Exiting.")
         shutil.rmtree(TEMP_DIR, ignore_errors=True)
         raise SystemExit
 
-    progress.finish()
-    _print_errors(error_log, show_errors)
+    pipeline.finish()
 
     positive_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 1]
     negative_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 0]
-    print(f"Processed: {len(positive_pairs)} positive, {len(negative_pairs)} negative pairs")
+    error_count    = len(pairs_raw) - len(labeled_pairs)
 
     with open(TEXTS_CACHE_FILE, "wb") as f:
         pickle.dump(texts, f)
     np.savez(FEATURES_CACHE_FILE, **{str(k): v for k, v in feature_vecs.items()})
 
-    return positive_pairs, negative_pairs
+    if show_errors and error_log:
+        for entry in error_log:
+            print(entry)
+
+    return positive_pairs, negative_pairs, error_count
 
 
-# ── Classifiers and comparisons ───────────────────────────────────────────────
+# ── Classifiers ───────────────────────────────────────────────────────────────
 
-def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts: RunOptions):
-    goc_results     = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder, fixed_threshold=opts.fixed_threshold)          if opts.run_goc             else None
-    full_tfidf      = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder=models_folder, fixed_threshold=opts.fixed_threshold) if opts.run_baseline        else None
-    keyword_tfidf   = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, keyword_only=True, models_folder=models_folder, fixed_threshold=opts.fixed_threshold) if opts.run_keyword_baseline else None
-    jaccard_results = jaccard_baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder)  if opts.run_jaccard         else None
+def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts: RunOptions, pipeline):
+    results = []
 
-    comparisons = [
-        (goc_results,   full_tfidf,    "GoC",          "TF-IDF (full)",          "statistical_comparison.csv"),
-        (goc_results,   keyword_tfidf, "GoC",          "TF-IDF (keywords only)", "statistical_comparison_keyword.csv"),
-        (goc_results,   jaccard_results,"GoC",          "Jaccard",                "statistical_comparison_jaccard.csv"),
-        (full_tfidf,    keyword_tfidf, "TF-IDF (full)","TF-IDF (keywords only)", "statistical_comparison_tfidf_vs_keyword.csv"),
+    if opts.run_goc:
+        r = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+                     models_folder, fixed_threshold=opts.fixed_threshold, pipeline=pipeline)
+        results.append(r)
+
+    if opts.run_tfidf:
+        r = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+                     keyword_only=False, models_folder=models_folder,
+                     fixed_threshold=opts.fixed_threshold, pipeline=pipeline)
+        results.append(r)
+
+    if opts.run_tfidf_keywords:
+        r = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+                     keyword_only=True, models_folder=models_folder,
+                     fixed_threshold=opts.fixed_threshold, pipeline=pipeline)
+        results.append(r)
+
+    if opts.run_jaccard:
+        r = jaccard_baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+                             models_folder=models_folder, pipeline=pipeline)
+        results.append(r)
+
+    return results
+
+
+def _run_comparisons(results, results_folder):
+    by_name = {r["name"]: r for r in results}
+    pairs = [
+        ("GoCP",             "TF-IDF (Full)",      "statistical_comparison.csv"),
+        ("GoCP",             "TF-IDF (Keywords)",  "statistical_comparison_keyword.csv"),
+        ("GoCP",             "Jaccard",             "statistical_comparison_jaccard.csv"),
+        ("TF-IDF (Full)",    "TF-IDF (Keywords)",  "statistical_comparison_tfidf_vs_keyword.csv"),
     ]
+    for name_a, name_b, filename in pairs:
+        if name_a in by_name and name_b in by_name:
+            ra, rb = by_name[name_a], by_name[name_b]
+            print(f"\n{name_a} vs {name_b}:")
+            _statistical_comparison(
+                ra["fold_results"], rb["fold_results"],
+                name_a, name_b, results_folder, filename,
+            )
 
-    for results_a, results_b, label_a, label_b, filename in comparisons:
-        if results_a is not None and results_b is not None:
-            print(f"\n{label_a} vs {label_b}:")
-            _statistical_comparison(results_a, results_b, label_a, label_b, results_folder, filename)
 
-
-def _statistical_comparison(results_a, results_b, label_a, label_b, results_folder, filename):
+def _statistical_comparison(fold_results_a, fold_results_b, label_a, label_b, results_folder, filename):
     from scipy.stats import wilcoxon, norm
 
-    f1_a = np.array([r[3] for r in results_a])
-    f1_b = np.array([r[3] for r in results_b])
+    f1_a = np.array([r[3] for r in fold_results_a])
+    f1_b = np.array([r[3] for r in fold_results_b])
 
     print(f"\n  --- Statistical Comparison (Wilcoxon Signed-Rank Test) ---")
     print(f"  {label_a} avg F1: {np.mean(f1_a):.4f}")
@@ -324,7 +403,7 @@ def _statistical_comparison(results_a, results_b, label_a, label_b, results_fold
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["fold", f"{label_a}_f1", f"{label_b}_f1", "difference"])
-        for (fold, *_, fa), (_, *_, fb) in zip(results_a, results_b):
+        for (fold, *_, fa), (_, *_, fb) in zip(fold_results_a, fold_results_b):
             writer.writerow([fold, f"{fa:.4f}", f"{fb:.4f}", f"{fa - fb:.4f}"])
         writer.writerow([])
         writer.writerow(["metric", "value"])
@@ -335,6 +414,28 @@ def _statistical_comparison(results_a, results_b, label_a, label_b, results_fold
             writer.writerow(["p_value",       f"{p_value:.4f}"])
             writer.writerow(["effect_size_r", f"{effect_r:.4f}"])
     print(f"  Saved to {output_path}")
+
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+def _print_summary(dataset_info, results, results_folder, models_folder):
+    sep = "─" * 56
+    print(sep)
+    for line in dataset_info:
+        print(line)
+    if results:
+        print()
+        for r in results:
+            name   = r["name"]
+            thresh = r["threshold"]
+            avg    = r["avg"]
+            print(f"  {name:<22}  Threshold: {thresh:.2f}  |  "
+                  f"P={avg['precision']:.4f}  R={avg['recall']:.4f}  F1={avg['f1']:.4f}")
+    print()
+    print(f"  Results saved to {results_folder}")
+    if models_folder:
+        print(f"  Models saved to  {models_folder}")
+    print(sep)
 
 
 # ── Processing helpers ─────────────────────────────────────────────────────────
@@ -391,13 +492,6 @@ def _generate_negative_pairs(positive_pairs, total_funcs, count):
             negative_pairs.append((idx_a, idx_b))
         attempts += 1
     return negative_pairs
-
-
-def _print_errors(error_log, show_errors):
-    if show_errors and error_log:
-        print("Errors:")
-        for entry in error_log:
-            print(entry)
 
 
 if __name__ == "__main__":
