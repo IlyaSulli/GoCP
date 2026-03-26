@@ -1,12 +1,14 @@
 import ast
+import logging
 import os
 import warnings
 
 import networkx as nx
 
+logger = logging.getLogger(__name__)
 
-# Non-terminal AST nodes (structural/statement constructs).
-# Leaf nodes (Name, Constant, arg, etc.) are excluded per the GoC paper.
+# Leaf nodes (Name, Constant, arg, etc.) are excluded per the GoC paper —
+# only structural/statement constructs form vertices in the graph.
 NON_TERMINAL_NODES = (
     ast.FunctionDef,
     ast.AsyncFunctionDef,
@@ -45,7 +47,8 @@ NON_TERMINAL_NODES = (
     ast.Nonlocal,
 )
 
-# Control flow nodes whose bodies create control dependencies
+# Subset of NON_TERMINAL_NODES that introduce a new scope/branch,
+# used when adding control-dependency edges.
 CONTROL_NODES = (
     ast.If,
     ast.For,
@@ -99,21 +102,22 @@ def _def_names(node):
 def goc(clone, progress=None, filepath=None):
     label = os.path.basename(filepath) if filepath else "unknown"
 
-    # Step 1: Parse the function string into an AST
+    # Capture SyntaxWarnings rather than suppressing them so they reach the log.
     if progress:
         progress.status(f"GoC [{label}]: Parsing AST")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", SyntaxWarning)
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always", SyntaxWarning)
         tree = ast.parse(clone)
+    for w in caught_warnings:
+        logger.warning("SyntaxWarning while parsing %s: %s", label, w.message)
 
-    # Step 2: Set parent references on every node
+    # Parent references are needed by nearest_nonterminal() later.
     if progress:
         progress.status(f"GoC [{label}]: Setting parent references")
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
             child.parent = node
 
-    # Step 3: Build graph nodes from non-terminal nodes
     if progress:
         progress.status(f"GoC [{label}]: Building graph nodes")
     graph = nx.DiGraph()
@@ -135,7 +139,7 @@ def goc(clone, progress=None, filepath=None):
         else:
             graph.add_edge(src_id, dst_id, weight=1)
 
-    # Step 4: Structural edges — AST parent → child between non-terminal nodes
+    # Structural edges: connect each non-terminal to its nearest non-terminal ancestor.
     if progress:
         progress.status(f"GoC [{label}]: Adding structural edges")
     for node in ast.walk(tree):
@@ -144,10 +148,10 @@ def goc(clone, progress=None, filepath=None):
             if parent is not None and isinstance(parent, NON_TERMINAL_NODES):
                 add_edge(node_to_id[id(parent)], node_to_id[id(node)])
 
-    # Step 5: Control dependency edges
-    # Each control flow node gets an edge to EVERY non-terminal descendant
-    # in its body, not just direct children. This creates the cross-edges
-    # that produce triangles (e.g. For → If → Assign but also For → Assign).
+    # Control-dependency edges: each control node gets an edge to every
+    # non-terminal descendant in its body, not just direct children.
+    # This produces the cross-edges (e.g. For→Assign) that create triangles
+    # and make the graph more distinctive between structurally different functions.
     if progress:
         progress.status(f"GoC [{label}]: Adding control dependency edges")
     for node in ast.walk(tree):
@@ -159,9 +163,8 @@ def goc(clone, progress=None, filepath=None):
                 if isinstance(desc, NON_TERMINAL_NODES) and id(desc) in node_to_id:
                     add_edge(ctrl_id, node_to_id[id(desc)])
 
-    # Step 6: Data dependency edges — def → use for each variable
-    # For each Name(Load), find its nearest non-terminal ancestor.
-    # For each defining node, add an edge to every use node of that variable.
+    # Data-dependency edges: for each variable use, draw an edge from every
+    # node that defined that variable to the node containing the use.
     if progress:
         progress.status(f"GoC [{label}]: Adding data dependency edges")
 
@@ -172,15 +175,13 @@ def goc(clone, progress=None, filepath=None):
             n = getattr(n, "parent", None)
         return None
 
-    # definitions: var_name -> [node_id, ...]
-    definitions = {}
+    definitions = {}  # var_name -> [node_id, ...]
     for node in ast.walk(tree):
         if isinstance(node, NON_TERMINAL_NODES) and id(node) in node_to_id:
             for name in _def_names(node):
                 definitions.setdefault(name, []).append(node_to_id[id(node)])
 
-    # uses: var_name -> [node_id, ...]
-    uses = {}
+    uses = {}  # var_name -> [node_id, ...]
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             nt_id = nearest_nonterminal(node)
