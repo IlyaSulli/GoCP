@@ -165,7 +165,7 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
         print(f"Cache sample size mismatch ({cache.get('sample_size')} vs {sample_size}) — reprocessing")
 
     positive_pairs, negative_pairs = _process_poolc(sample_size, opts.show_errors)
-
+ 
     with open(CACHE_FILE, "w") as f:
         json.dump({"sample_size": sample_size,
                    "positive_pairs": positive_pairs,
@@ -201,7 +201,7 @@ def _process_poolc(sample_size, show_errors):
     labeled_pairs = []
     texts = {}
     feature_vecs = {}
-    func_index = [0]
+    next_idx = [0]
 
     try:
         with ProcessPoolExecutor() as executor:
@@ -213,7 +213,8 @@ def _process_poolc(sample_size, show_errors):
                 i, label = futures[future]
                 try:
                     feat_a, feat_b, text_a, text_b = future.result()
-                    idx_a, idx_b = _save_pair(feat_a, feat_b, text_a, text_b, func_index)
+                    idx_a, idx_b = next_idx[0], next_idx[0] + 1
+                    next_idx[0] += 2
                     texts[idx_a] = text_a
                     texts[idx_b] = text_b
                     feature_vecs[idx_a] = feat_a
