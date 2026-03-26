@@ -21,8 +21,10 @@ def _enable_ansi():
 
 
 def _fmt(secs):
-    m, s = divmod(int(secs), 60)
-    return f"{m}:{s:02d}"
+    secs = int(secs)
+    h, rem = divmod(secs, 3600)
+    m, s   = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
 # ── ProgressBar ───────────────────────────────────────────────────────────────
@@ -143,6 +145,10 @@ class Pipeline:
     def update(self, counter, amount=1):
         """Increment a bar counter."""
         self._counts[counter] = self._counts.get(counter, 0) + amount
+        self._draw()
+
+    def ping(self):
+        """Advance the spinner without changing counts — use during long setup loops."""
         self._draw()
 
     def finish(self):

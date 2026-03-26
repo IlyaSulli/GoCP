@@ -310,28 +310,33 @@ def _process_poolc(sample_size, pipeline):
     from datasets import load_dataset
 
     half = sample_size // 2
-    pipeline.begin("Stream PoolC dataset", sample_size, ["Pairs"])
-    pipeline.status("Streaming PoolC dataset from Hugging Face...")
 
     # Suppress HuggingFace's unauthenticated-request warning — it prints to
     # stderr mid-display and breaks the pipeline's line-count tracking.
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
+    pipeline.begin("Stream PoolC dataset", sample_size, ["Streamed"])
+    pipeline.status("Connecting to Hugging Face — this may take a moment...")
+
     dataset = load_dataset("PoolC/1-fold-clone-detection-600k-5fold", split="train", streaming=True)
 
+    pipeline.status("Streaming pairs...")
     pairs_raw = []
     pos_count = neg_count = 0
     for row in dataset:
         if row["similar"] == 1 and pos_count < half:
             pairs_raw.append((row["code1"], row["code2"], 1))
             pos_count += 1
+            pipeline.update("Streamed")
         elif row["similar"] == 0 and neg_count < half:
             pairs_raw.append((row["code1"], row["code2"], 0))
             neg_count += 1
+            pipeline.update("Streamed")
         if pos_count >= half and neg_count >= half:
             break
 
-    pipeline.status(f"Processing {len(pairs_raw)} pairs...")
+    pipeline.begin("Stream PoolC dataset", len(pairs_raw), ["Processed"])
+    pipeline.status("Starting worker processes — may freeze briefly depending on hardware...")
     os.makedirs(TEMP_DIR, exist_ok=True)
 
     error_log = []
@@ -342,10 +347,12 @@ def _process_poolc(sample_size, pipeline):
 
     try:
         with ProcessPoolExecutor(initializer=_worker_init) as executor:
-            futures = {
-                executor.submit(_process_pair, code1, code2): (i, label)
-                for i, (code1, code2, label) in enumerate(pairs_raw)
-            }
+            pipeline.status(f"Queuing {len(pairs_raw)} pairs...")
+            futures = {}
+            for i, (code1, code2, label) in enumerate(pairs_raw):
+                futures[executor.submit(_process_pair, code1, code2)] = (i, label)
+                pipeline.ping()
+            pipeline.status(f"Processing {len(pairs_raw)} pairs...")
             for future in as_completed(futures):
                 i, label = futures[future]
                 try:
@@ -357,11 +364,11 @@ def _process_poolc(sample_size, pipeline):
                     feature_vecs[idx_a] = feat_a
                     feature_vecs[idx_b] = feat_b
                     labeled_pairs.append((idx_a, idx_b, label))
-                    pipeline.update("Pairs")
+                    pipeline.update("Processed")
                 except Exception as e:
                     logger.warning("pair %d failed: %s", i, e)
                     error_log.append(f"  pair {i}: {e}")
-                    pipeline.update("Pairs")
+                    pipeline.update("Processed")
     except KeyboardInterrupt:
         pipeline.finish()
         pipeline.complete()
