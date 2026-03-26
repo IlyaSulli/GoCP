@@ -90,7 +90,7 @@ Runs all available models against 50 hand-crafted test cases (10 per clone type)
 
 ### Model Training
 
-<img width="3680" height="1792" alt="terminal" src="https://github.com/user-attachments/assets/97e5af4e-0146-4a51-886f-e6dfc0b746fa" />
+<img width="2048" height="1094" alt="carbon" src="https://github.com/user-attachments/assets/6876bf02-6739-4d5e-872e-77768b4abed4" />
 
 ### Type 4 Functions
 The following functions have slightly different graphcial representations but serves the same function. It has correctly identified that they **ARE** clone functions 
