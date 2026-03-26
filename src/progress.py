@@ -61,7 +61,7 @@ class ProgressBar:
         self._tlast = now
 
         if self._prev:
-            sys.stdout.write(f"\033[{self._prev}F\033[J")
+            sys.stdout.write(f"\033[{self._prev}A\r\033[J")
 
         lines = []
         if self._status:
@@ -157,7 +157,7 @@ class Pipeline:
     def complete(self):
         """Clear the pipeline display before printing the final summary."""
         if self._prev:
-            sys.stdout.write(f"\033[{self._prev}F\033[J")
+            sys.stdout.write(f"\033[{self._prev}A\r\033[J")
             self._prev = 0
         sys.stdout.flush()
 
@@ -171,7 +171,7 @@ class Pipeline:
         self._spin  = (self._spin + 1) % 4
 
         if self._prev:
-            sys.stdout.write(f"\033[{self._prev}F\033[J")
+            sys.stdout.write(f"\033[{self._prev}A\r\033[J")
 
         lines = []
 
