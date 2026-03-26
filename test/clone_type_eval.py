@@ -982,8 +982,8 @@ def run():
         print("No trained models found. Run train/main.py --save-models first.")
         return
 
-    short_names = [m.split("(")[0].strip()[:13] for m in methods]
     col_w = 15
+    short_names = [m[:col_w - 1] for m in methods]
 
     header = f"{'Type':<8} {'Description':<38} {'Expected':<11}"
     for s in short_names:
