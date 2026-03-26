@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -12,6 +13,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.feature_extraction.text import TfidfVectorizer
 from progress import ProgressBar
 
+logger = logging.getLogger(__name__)
 
 _PYTHON_KEYWORDS_PATTERN = (
     r"\b(?:False|None|True|and|as|assert|async|await|break|class|continue|"
@@ -28,6 +30,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
 
     texts_cache_path = os.path.join(temp_dir, "texts_cache.pkl")
     if os.path.exists(texts_cache_path):
+        logger.info("Loading texts from cache: %s", texts_cache_path)
         with open(texts_cache_path, "rb") as f:
             texts = pickle.load(f)
     else:
@@ -36,7 +39,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
             with open(os.path.join(temp_dir, f"func_{idx}.txt"), "r", encoding="utf-8") as f:
                 texts[idx] = f.read()
 
-    step_name    = "Train TF-IDF (Keywords)" if keyword_only else "Train TF-IDF (Full)"
+    step_name     = "Train TF-IDF (Keywords)" if keyword_only else "Train TF-IDF (Full)"
     token_pattern = _PYTHON_KEYWORDS_PATTERN if keyword_only else r"[A-Za-z_]\w*|\S"
 
     total_steps = 10 + (3 if models_folder else 2)  # matrix build + threshold + folds + optional save
@@ -82,6 +85,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
     if fixed_threshold:
         best_threshold = 0.5
         progress.status("Using fixed threshold: 0.50")
+        logger.info("%s: using fixed threshold 0.50", step_name)
     else:
         progress.status("Finding optimal threshold on validation set...")
         val_probs = clf.predict_proba(X_val)[:, 1]
@@ -91,6 +95,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
             if f1 > best_val_f1:
                 best_val_f1, best_threshold = f1, t
         progress.status(f"Threshold: {best_threshold:.2f}  (val F1={best_val_f1:.4f})")
+        logger.info("%s: optimal threshold=%.2f  val_F1=%.4f", step_name, best_threshold, best_val_f1)
     progress.update("Folds")
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
@@ -106,11 +111,13 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
         recall    = recall_score(y_train[test_idx], y_pred, zero_division=0)
         f1        = f1_score(y_train[test_idx], y_pred, zero_division=0)
         fold_results.append((fold, precision, recall, f1))
+        logger.info("%s fold %d: P=%.4f R=%.4f F1=%.4f", step_name, fold, precision, recall, f1)
         progress.update("Folds")
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])
     avg_f1        = np.mean([r[3] for r in fold_results])
+    logger.info("%s average: P=%.4f R=%.4f F1=%.4f", step_name, avg_precision, avg_recall, avg_f1)
 
     model_path = None
     if models_folder:
@@ -121,6 +128,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
         clf.fit(X_train, y_train)
         model_path = os.path.join(models_folder, model_name)
         joblib.dump({"vectorizer": vectorizer, "clf": clf, "keyword_only": keyword_only, "threshold": best_threshold}, model_path)
+        logger.info("%s model saved to %s", step_name, model_path)
         progress.update("Folds")
 
     progress.finish()

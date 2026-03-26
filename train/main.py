@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -22,6 +23,31 @@ from baseline import baseline
 from jaccard_baseline import jaccard_baseline
 from progress import Pipeline, ProgressBar
 
+logger = logging.getLogger(__name__)
+
+
+def _worker_init():
+    # Worker processes don't inherit the main process's log handlers.
+    # Silence them entirely — exceptions still surface via future.result().
+    logging.disable(logging.CRITICAL)
+
+
+def _setup_logging(results_folder: str, log_path: str = "") -> None:
+    """Write INFO+ log messages to a file for the duration of the run.
+
+    If log_path is empty, defaults to <results_folder>/gocp.log.
+    """
+    path = log_path if log_path else os.path.join(results_folder, "gocp.log")
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-8s  %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.FileHandler(path, encoding="utf-8")],
+        force=True,
+    )
+    logger.info("Logging initialised — output: %s", path)
+
 
 DEFAULT_DATA_FOLDER    = "./data/"
 DEFAULT_RESULTS_FOLDER = "./results/"
@@ -38,14 +64,15 @@ _FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
 @dataclass
 class RunOptions:
-    run_goc:           bool = True
-    run_tfidf:         bool = False
+    run_goc:            bool = True
+    run_tfidf:          bool = False
     run_tfidf_keywords: bool = False
-    run_jaccard:       bool = False
-    show_errors:          bool = False
-    reprocess:            bool = False
-    save_models:          bool = False
-    fixed_threshold:      bool = False
+    run_jaccard:        bool = False
+    show_errors:        bool = False
+    reprocess:          bool = False
+    save_models:        bool = False
+    fixed_threshold:    bool = False
+    log_path:           str | None = None   # None = no logging; "" = default path
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -95,6 +122,8 @@ def main():
                             help="ignore cached data and reprocess from scratch")
     misc_group.add_argument("--show-errors", "-v", action="store_true",
                             help="print details for files that failed to process")
+    misc_group.add_argument("--log", metavar="FILE", nargs="?", const="", default=None,
+                            help="write a log file; FILE defaults to <results>/gocp.log")
 
     args = parser.parse_args()
 
@@ -107,6 +136,7 @@ def main():
         reprocess=args.reprocess,
         save_models=args.save_models,
         fixed_threshold=args.fixed_threshold,
+        log_path=args.log,
     )
 
     models_folder = args.models if opts.save_models else None
@@ -120,6 +150,9 @@ def main():
 # ── Local folder mode (SemanticCloneBench) ────────────────────────────────────
 
 def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
+    if opts.log_path is not None:
+        _setup_logging(results_folder, opts.log_path)
+    logger.info("run_local: data=%s  results=%s", data_folder, results_folder)
     py_files = [
         os.path.join(root, f)
         for root, _, files in os.walk(data_folder)
@@ -147,7 +180,7 @@ def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
     func_index = [0]
 
     try:
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(initializer=_worker_init) as executor:
             futures = {executor.submit(_process_file, fp): fp for fp in py_files}
             for future in as_completed(futures):
                 filepath = futures[future]
@@ -198,7 +231,9 @@ def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
 # ── PoolC (Hugging Face) mode ─────────────────────────────────────────────────
 
 def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
-    # Determine if the pairs cache is usable
+    if opts.log_path is not None:
+        _setup_logging(results_folder, opts.log_path)
+    logger.info("run_poolc: sample_size=%d  results=%s", sample_size, results_folder)
     using_cache = False
     cache = None
     if not opts.reprocess and os.path.exists(CACHE_FILE):
@@ -207,7 +242,7 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
         if cache.get("sample_size") == sample_size:
             using_cache = True
         else:
-            print(f"Cache sample size mismatch ({cache.get('sample_size')} vs {sample_size}) — reprocessing")
+            logger.info("Cache sample size mismatch (%s vs %d) — reprocessing", cache.get('sample_size'), sample_size)
 
     steps = []
     if not using_cache:
@@ -224,11 +259,12 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     pipeline = Pipeline(steps)
 
     error_count = 0
+    error_log   = []
     if using_cache:
         positive_pairs = [tuple(p) for p in cache["positive_pairs"]]
         negative_pairs = [tuple(p) for p in cache["negative_pairs"]]
     else:
-        positive_pairs, negative_pairs, error_count = _process_poolc(sample_size, opts.show_errors, pipeline)
+        positive_pairs, negative_pairs, error_count, error_log = _process_poolc(sample_size, pipeline)
         with open(CACHE_FILE, "w") as f:
             json.dump({"sample_size": sample_size,
                        "positive_pairs": positive_pairs,
@@ -237,6 +273,11 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     results = _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts, pipeline)
 
     pipeline.complete()
+
+    if opts.show_errors and error_log:
+        print("Errors:")
+        for entry in error_log:
+            print(entry)
 
     dataset_info = [
         f"Dataset:     PoolC (Hugging Face)",
@@ -250,7 +291,7 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     _run_comparisons(results, results_folder)
 
 
-def _process_poolc(sample_size, show_errors, pipeline):
+def _process_poolc(sample_size, pipeline):
     from datasets import load_dataset
 
     half = sample_size // 2
@@ -281,7 +322,7 @@ def _process_poolc(sample_size, show_errors, pipeline):
     next_idx = [0]
 
     try:
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(initializer=_worker_init) as executor:
             futures = {
                 executor.submit(_process_pair, code1, code2): (i, label)
                 for i, (code1, code2, label) in enumerate(pairs_raw)
@@ -299,8 +340,8 @@ def _process_poolc(sample_size, show_errors, pipeline):
                     labeled_pairs.append((idx_a, idx_b, label))
                     pipeline.update("Pairs")
                 except Exception as e:
-                    if show_errors:
-                        error_log.append(f"  pair {i}: {e}")
+                    logger.warning("pair %d failed: %s", i, e)
+                    error_log.append(f"  pair {i}: {e}")
                     pipeline.update("Pairs")
     except KeyboardInterrupt:
         pipeline.finish()
@@ -319,11 +360,7 @@ def _process_poolc(sample_size, show_errors, pipeline):
         pickle.dump(texts, f)
     np.savez(FEATURES_CACHE_FILE, **{str(k): v for k, v in feature_vecs.items()})
 
-    if show_errors and error_log:
-        for entry in error_log:
-            print(entry)
-
-    return positive_pairs, negative_pairs, error_count
+    return positive_pairs, negative_pairs, error_count, error_log
 
 
 # ── Classifiers ───────────────────────────────────────────────────────────────
@@ -396,6 +433,7 @@ def _statistical_comparison(fold_results_a, fold_results_b, label_a, label_b, re
         else:
             print(f"  No statistically significant difference (p={p_value:.4f} >= 0.05)")
     except Exception as e:
+        logger.warning("Wilcoxon test failed (%s vs %s): %s", label_a, label_b, e)
         print(f"  Wilcoxon test failed: {e}")
 
     os.makedirs(results_folder, exist_ok=True)
@@ -483,7 +521,8 @@ def _generate_negative_pairs(positive_pairs, total_funcs, count):
     positive_set = {(min(a, b), max(a, b)) for a, b in positive_pairs}
     negative_pairs = []
     attempts = 0
-    while len(negative_pairs) < count and attempts < count * 20:
+    max_attempts = count * 20
+    while len(negative_pairs) < count and attempts < max_attempts:
         idx_a = random.randrange(0, total_funcs)
         idx_b = random.randrange(0, total_funcs)
         if idx_a != idx_b \
@@ -491,6 +530,12 @@ def _generate_negative_pairs(positive_pairs, total_funcs, count):
                 and (min(idx_a, idx_b), max(idx_a, idx_b)) not in positive_set:
             negative_pairs.append((idx_a, idx_b))
         attempts += 1
+    if len(negative_pairs) < count:
+        logger.warning(
+            "Could only generate %d negative pairs (wanted %d) after %d attempts — "
+            "the function pool may be too small",
+            len(negative_pairs), count, attempts,
+        )
     return negative_pairs
 
 

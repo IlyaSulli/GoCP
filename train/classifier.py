@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -9,51 +10,45 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.pipeline import Pipeline as SKPipeline
 from sklearn.preprocessing import StandardScaler
-from scipy.spatial.distance import canberra, cosine
-from scipy.stats import pearsonr
 from progress import ProgressBar
+from utils import similarity_features
 
-
-def _similarity_features(vec_a, vec_b):
-    try:
-        canberra_dist = canberra(vec_a, vec_b)
-    except Exception:
-        canberra_dist = 0.0
-    try:
-        cosine_dist = cosine(vec_a, vec_b)
-    except Exception:
-        cosine_dist = 0.0
-    euclidean_dist = float(np.linalg.norm(vec_a - vec_b))
-    try:
-        corr, _ = pearsonr(vec_a, vec_b)
-        corr = 0.0 if np.isnan(corr) else corr
-    except Exception:
-        corr = 0.0
-    return np.array([canberra_dist, cosine_dist, euclidean_dist, corr])
+logger = logging.getLogger(__name__)
 
 
 def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None, fixed_threshold=False, pipeline=None):
     features_cache_path = os.path.join(temp_dir, "features_cache.npz")
-    if os.path.exists(features_cache_path):
-        cache = np.load(features_cache_path)
-        def load_vec(idx):
-            return np.nan_to_num(cache[str(idx)], nan=0.0, posinf=0.0, neginf=0.0)
-    else:
-        def load_vec(idx):
-            v = np.load(os.path.join(temp_dir, f"func_{idx}.npy"))
-            return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
 
     X, y = [], []
-    for idx_a, idx_b in positive_pairs:
-        vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
-        sim = _similarity_features(vec_a, vec_b)
-        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
-        y.append(1)
-    for idx_a, idx_b in negative_pairs:
-        vec_a, vec_b = load_vec(idx_a), load_vec(idx_b)
-        sim = _similarity_features(vec_a, vec_b)
-        X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
-        y.append(0)
+    if os.path.exists(features_cache_path):
+        logger.info("Loading features from cache: %s", features_cache_path)
+        with np.load(features_cache_path) as cache:
+            for idx_a, idx_b in positive_pairs:
+                vec_a = np.nan_to_num(cache[str(idx_a)], nan=0.0, posinf=0.0, neginf=0.0)
+                vec_b = np.nan_to_num(cache[str(idx_b)], nan=0.0, posinf=0.0, neginf=0.0)
+                sim = similarity_features(vec_a, vec_b)
+                X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+                y.append(1)
+            for idx_a, idx_b in negative_pairs:
+                vec_a = np.nan_to_num(cache[str(idx_a)], nan=0.0, posinf=0.0, neginf=0.0)
+                vec_b = np.nan_to_num(cache[str(idx_b)], nan=0.0, posinf=0.0, neginf=0.0)
+                sim = similarity_features(vec_a, vec_b)
+                X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+                y.append(0)
+    else:
+        def _load_vec(idx):
+            v = np.load(os.path.join(temp_dir, f"func_{idx}.npy"))
+            return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+        for idx_a, idx_b in positive_pairs:
+            vec_a, vec_b = _load_vec(idx_a), _load_vec(idx_b)
+            sim = similarity_features(vec_a, vec_b)
+            X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+            y.append(1)
+        for idx_a, idx_b in negative_pairs:
+            vec_a, vec_b = _load_vec(idx_a), _load_vec(idx_b)
+            sim = similarity_features(vec_a, vec_b)
+            X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+            y.append(0)
 
     X = np.array(X)
     y = np.array(y)
@@ -83,6 +78,7 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
     if fixed_threshold:
         best_threshold = 0.5
         progress.status("Using fixed threshold: 0.50")
+        logger.info("GoCP: using fixed threshold 0.50")
     else:
         progress.status("Finding optimal threshold on validation set...")
         pipe.fit(X_train, y_train)
@@ -93,6 +89,7 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
             if f1 > best_val_f1:
                 best_val_f1, best_threshold = f1, t
         progress.status(f"Threshold: {best_threshold:.2f}  (val F1={best_val_f1:.4f})")
+        logger.info("GoCP: optimal threshold=%.2f  val_F1=%.4f", best_threshold, best_val_f1)
     progress.update("Folds")
 
     fold_results = []
@@ -106,11 +103,13 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
         recall    = recall_score(y_train[test_idx], y_pred, zero_division=0)
         f1        = f1_score(y_train[test_idx], y_pred, zero_division=0)
         fold_results.append((fold, precision, recall, f1))
+        logger.info("GoCP fold %d: P=%.4f R=%.4f F1=%.4f", fold, precision, recall, f1)
         progress.update("Folds")
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])
     avg_f1        = np.mean([r[3] for r in fold_results])
+    logger.info("GoCP average: P=%.4f R=%.4f F1=%.4f", avg_precision, avg_recall, avg_f1)
 
     model_path = None
     if models_folder:
@@ -124,6 +123,7 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
             "clf": pipe.named_steps["clf"],
             "threshold": best_threshold,
         }, model_path)
+        logger.info("GoCP model saved to %s", model_path)
         progress.update("Folds")
 
     progress.finish()

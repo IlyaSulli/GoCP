@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -8,21 +9,21 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import precision_score, recall_score, f1_score
 from progress import ProgressBar
+from utils import jaccard_similarity
 
+logger = logging.getLogger(__name__)
 
-def _jaccard(text_a, text_b):
-    tokens_a = set(text_a.split())
-    tokens_b = set(text_b.split())
-    if not tokens_a and not tokens_b:
-        return 1.0
-    if not tokens_a or not tokens_b:
-        return 0.0
-    return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+# Deployment threshold for Jaccard. This is a fixed value rather than a
+# learned one because Jaccard is a similarity score (not a probability), and
+# 0.6 was found to give a reasonable precision/recall trade-off on PoolC.
+# It is intentionally not optimised per-fold to keep inference simple.
+_DEPLOYMENT_THRESHOLD = 0.6
 
 
 def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None, pipeline=None):
     texts_cache_path = os.path.join(temp_dir, "texts_cache.pkl")
     if os.path.exists(texts_cache_path):
+        logger.info("Loading texts from cache: %s", texts_cache_path)
         with open(texts_cache_path, "rb") as f:
             texts = pickle.load(f)
     else:
@@ -47,7 +48,7 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, m
         progress = ProgressBar(total_steps, ["Folds"])
 
     progress.status("Computing Jaccard similarities...")
-    similarities = np.array([_jaccard(texts[a], texts[b]) for a, b in all_pairs])
+    similarities = np.array([jaccard_similarity(texts[a], texts[b]) for a, b in all_pairs])
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     thresholds = np.linspace(0.0, 1.0, 101)
@@ -70,13 +71,14 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, m
         f1        = f1_score(y_test, y_pred, zero_division=0)
 
         fold_results.append((fold, precision, recall, f1))
+        logger.info("Jaccard fold %d: threshold=%.2f P=%.4f R=%.4f F1=%.4f",
+                    fold, best_threshold, precision, recall, f1)
         progress.update("Folds")
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])
     avg_f1        = np.mean([r[3] for r in fold_results])
-
-    saved_threshold = 0.6  # fixed deployment threshold for Jaccard
+    logger.info("Jaccard average: P=%.4f R=%.4f F1=%.4f", avg_precision, avg_recall, avg_f1)
 
     model_path = None
     if models_folder:
@@ -84,7 +86,9 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, m
         os.makedirs(models_folder, exist_ok=True)
         progress.status("Saving Jaccard model...")
         model_path = os.path.join(models_folder, "jaccard_model.joblib")
-        joblib.dump({"threshold": saved_threshold}, model_path)
+        joblib.dump({"threshold": _DEPLOYMENT_THRESHOLD}, model_path)
+        logger.info("Jaccard model saved to %s  (deployment threshold=%.2f)",
+                    model_path, _DEPLOYMENT_THRESHOLD)
         progress.update("Folds")
 
     progress.finish()
@@ -101,7 +105,7 @@ def jaccard_baseline(positive_pairs, negative_pairs, temp_dir, results_folder, m
     return {
         "name": "Jaccard",
         "fold_results": fold_results,
-        "threshold": saved_threshold,
+        "threshold": _DEPLOYMENT_THRESHOLD,
         "avg": {"precision": avg_precision, "recall": avg_recall, "f1": avg_f1},
         "path": output_path,
     }
