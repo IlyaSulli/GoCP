@@ -49,9 +49,15 @@ This will:
 1. Download and preprocess 200,000 pairs from PoolC (~20–40 minutes depending on hardware)
 2. Train all four models with 10-fold stratified cross-validation
 3. Print per-fold and average Precision / Recall / F1 for each method
-4. Print the optimal decision threshold found from out-of-fold predictions
+4. Find and print the optimal decision threshold from a held-out validation set (15% of training data)
 5. Save trained models to `models/`
 6. Save per-fold results to `results/`
+
+To use a fixed 0.5 threshold instead of learning it, add `--fixed-threshold`:
+
+```bash
+python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --sample 200000 --fixed-threshold
+```
 
 > **Note:** The first run downloads and processes the dataset. Subsequent runs reuse the cache in `temp/` and are significantly faster.
 
@@ -102,7 +108,7 @@ To replicate a smaller run (e.g. for a faster test):
 
 ```bash
 rm temp/features_cache.npz   # or del on Windows
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --sample 10000
+python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard -n 10000
 ```
 
 Results will differ from the reported values but the relative ordering of methods should remain consistent.

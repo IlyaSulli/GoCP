@@ -121,25 +121,43 @@ To retrain all models from scratch using the PoolC dataset (requires an internet
 python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard
 ```
 
-**Key options:**
+**Data source options:**
+
+| Flag | Short | Description |
+|---|---|---|
+| `--poolc` | | Load data from the PoolC Hugging Face dataset instead of `--data` |
+| `--data DIR` | | Path to a local data folder (default: `./data/`) |
+| `--sample N` | `-n N` | Number of pairs to sample from PoolC (default: 20000) |
+
+**Method options:**
 
 | Flag | Description |
 |---|---|
-| `--poolc` | Download and use the PoolC dataset from Hugging Face |
-| `--save-models` | Save trained models to `models/` |
+| `--no-goc` | Skip the GoCP classifier |
 | `--baseline` | Train the TF-IDF (full) model |
 | `--keyword-baseline` | Train the TF-IDF (keywords only) model |
 | `--jaccard` | Train the Jaccard baseline |
-| `--no-goc` | Skip GoC model training |
-| `--sample N` | Number of pairs to train on (default: 20000) |
-| `--reprocess` | Delete cached features and reprocess from scratch |
-| `--results PATH` | Folder to write results CSV files (default: `results/`) |
-| `--models PATH` | Folder to write model files (default: `models/`) |
+
+**Output options:**
+
+| Flag | Short | Description |
+|---|---|---|
+| `--save-models` | | Save trained models to `--models` folder |
+| `--results DIR` | `-r DIR` | Folder to write results CSV files (default: `./results/`) |
+| `--models DIR` | `-m DIR` | Folder to write model files (default: `./models/`) |
+
+**Misc options:**
+
+| Flag | Short | Description |
+|---|---|---|
+| `--fixed-threshold` | | Use a fixed 0.5 decision threshold instead of learning it from the validation set |
+| `--reprocess` | | Ignore cached data and reprocess from scratch |
+| `--show-errors` | `-v` | Print details for files that failed to process |
 
 **Example — train GoC only on 50,000 pairs:**
 
 ```bash
-python train/main.py --poolc --save-models --sample 50000
+python train/main.py --poolc --save-models -n 50000
 ```
 
 **Example — retrain all models, forcing reprocessing:**
@@ -148,15 +166,21 @@ python train/main.py --poolc --save-models --sample 50000
 python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --reprocess
 ```
 
+**Example — retrain with a fixed 0.5 threshold:**
+
+```bash
+python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard --fixed-threshold
+```
+
 > **Note:** If you change the dataset size, delete `temp/features_cache.npz` first. Otherwise the cached features from the previous run will be reused regardless of `--sample`.
 
-Training outputs a per-fold precision, recall, and F1 score for each method, and prints the optimal decision threshold found from out-of-fold predictions.
+Training outputs a per-fold precision, recall, and F1 score for each method, and prints the decision threshold (either learned from the held-out validation set or fixed at 0.5).
 
 ---
 
 ## Adjusting the Decision Threshold
 
-Each model has a decision threshold saved inside it, found automatically during training by maximising F1 on out-of-fold predictions. If you want to override this (e.g. to reduce false positives by raising the threshold):
+Each model has a decision threshold saved inside it. By default, training finds the threshold that maximises F1 on a held-out validation set (15% of training data). You can instead use a fixed 0.5 threshold by passing `--fixed-threshold` at training time. To override the threshold of an already-trained model without retraining:
 
 ```bash
 python set_threshold.py <model> <threshold>
@@ -210,27 +234,26 @@ Results are printed to the terminal showing pass/fail per case, per-type accurac
 ```
 GoCP/
 ├── app/
-│   ├── app.py            # Streamlit web application
-│   ├── predictor.py      # Model loading and prediction
-│   └── scanner.py        # AST-based function extractor
-├── models/               # Trained model files (.joblib)
+│   ├── app.py              # Streamlit web application
+│   ├── predictor.py        # Model loading and prediction
+│   └── scanner.py          # AST-based function extractor
+├── models/                 # Trained model files (.joblib)
 ├── src/
-│   ├── goc.py            # Graph-of-Code construction
-│   ├── features.py       # 56-feature graph fingerprint
-│   └── preprocess.py     # Source code preprocessing
+│   ├── goc.py              # Graph-of-Code construction
+│   ├── features.py         # 56-feature graph fingerprint
+│   └── preprocess.py       # Source code preprocessing
 ├── train/
-│   ├── main.py           # Training entry point
-│   ├── classifier.py     # GoC + RandomForest trainer
-│   ├── baseline.py       # TF-IDF trainer
+│   ├── main.py             # Training entry point
+│   ├── classifier.py       # GoCP + RandomForest trainer
+│   ├── baseline.py         # TF-IDF trainer
 │   └── jaccard_baseline.py # Jaccard trainer
 ├── test/
-│   └── clone_type_eval.py # Clone type evaluation suite
-├── results/              # Training results (CSV)
-├── set_threshold.py      # Threshold override utility
-└── documentation/
-    ├── manual.md         # This file
-    ├── requirements.txt  # Python dependencies
-    └── replication.md    # Replication instructions
+│   └── clone_type_eval.py  # Clone type evaluation suite
+├── results/                # Training results (CSV)
+├── set_threshold.py        # Threshold override utility
+├── manual.md               # This file
+├── replication.md          # Replication instructions
+└── requirements.txt        # Python dependencies
 ```
 
 ---

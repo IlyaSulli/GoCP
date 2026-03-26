@@ -20,7 +20,7 @@ _PYTHON_KEYWORDS_PATTERN = (
 )
 
 
-def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_only=False, models_folder=None):
+def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_only=False, models_folder=None, fixed_threshold=False):
     all_indices = set()
     for idx_a, idx_b in positive_pairs + negative_pairs:
         all_indices.add(idx_a)
@@ -71,17 +71,20 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
     X_train, X_val = X[train_idx_split], X[val_idx_split]
     y_train, y_val = y[train_idx_split], y[val_idx_split]
 
-    # Find threshold on held-out validation set before CV so fold metrics match deployment
-    print(f"  Finding optimal threshold on validation set...")
     clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
     clf.fit(X_train, y_train)
-    val_probs = clf.predict_proba(X_val)[:, 1]
-    best_threshold, best_val_f1 = 0.5, -1.0
-    for t in np.linspace(0.0, 1.0, 101):
-        f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
-        if f1 > best_val_f1:
-            best_val_f1, best_threshold = f1, t
-    print(f"  Optimal threshold (validation F1={best_val_f1:.4f}): {best_threshold:.2f}")
+    if fixed_threshold:
+        best_threshold = 0.5
+        print(f"  Using fixed threshold: 0.50")
+    else:
+        print(f"  Finding optimal threshold on validation set...")
+        val_probs = clf.predict_proba(X_val)[:, 1]
+        best_threshold, best_val_f1 = 0.5, -1.0
+        for t in np.linspace(0.0, 1.0, 101):
+            f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
+            if f1 > best_val_f1:
+                best_val_f1, best_threshold = f1, t
+        print(f"  Optimal threshold (validation F1={best_val_f1:.4f}): {best_threshold:.2f}")
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
 

@@ -32,7 +32,7 @@ def _similarity_features(vec_a, vec_b):
     return np.array([canberra_dist, cosine_dist, euclidean_dist, corr])
 
 
-def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None):
+def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None, fixed_threshold=False):
     features_cache_path = os.path.join(temp_dir, "features_cache.npz")
     if os.path.exists(features_cache_path):
         print("  Loading features cache...")
@@ -72,15 +72,19 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
     ])
 
     # Find threshold on held-out validation set before CV so fold metrics match deployment
-    print("  Finding optimal threshold on validation set...")
     pipe.fit(X_train, y_train)
-    val_probs = pipe.predict_proba(X_val)[:, 1]
-    best_threshold, best_val_f1 = 0.5, -1.0
-    for t in np.linspace(0.0, 1.0, 101):
-        f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
-        if f1 > best_val_f1:
-            best_val_f1, best_threshold = f1, t
-    print(f"  Optimal threshold (validation F1={best_val_f1:.4f}): {best_threshold:.2f}")
+    if fixed_threshold:
+        best_threshold = 0.5
+        print("  Using fixed threshold: 0.50")
+    else:
+        print("  Finding optimal threshold on validation set...")
+        val_probs = pipe.predict_proba(X_val)[:, 1]
+        best_threshold, best_val_f1 = 0.5, -1.0
+        for t in np.linspace(0.0, 1.0, 101):
+            f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
+            if f1 > best_val_f1:
+                best_val_f1, best_threshold = f1, t
+        print(f"  Optimal threshold (validation F1={best_val_f1:.4f}): {best_threshold:.2f}")
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
 

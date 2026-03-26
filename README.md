@@ -18,7 +18,7 @@ Includes three baseline methods (TF-IDF full, TF-IDF keywords, Jaccard similarit
 - **Three baselines** — TF-IDF (full tokens), TF-IDF (keywords only), Jaccard similarity
 - **Streamlit web UI** — side-by-side Ace editors with syntax highlighting and instant clone detection
 - **Multi-function support** — paste an entire file; the tool extracts and lets you pick the function
-- **Optimised thresholds** — decision thresholds are tuned automatically from out-of-fold predictions during training
+- **Optimised thresholds** — decision thresholds are tuned on a held-out validation set during training, or fixed at 0.5 with `--fixed-threshold`
 - **Clone type evaluation** — 50-case test suite covering Type-1 through Type-4 clones and false negatives
 
 ---
@@ -55,7 +55,11 @@ The app opens at `http://localhost:8501`. Paste two Python functions, select a m
 ## Retraining
 
 ```bash
-python train/main.py --poolc --save-models --baseline --keyword-baseline --jaccard
+# Retrain all models on 200,000 pairs
+python train/main.py --poolc -n 200000 --save-models --baseline --keyword-baseline --jaccard
+
+# Use a fixed 0.5 threshold instead of learning it from the validation set
+python train/main.py --poolc -n 200000 --save-models --fixed-threshold
 ```
 
 See [manual.md](manual.md) for the full list of training options and how to adjust decision thresholds.

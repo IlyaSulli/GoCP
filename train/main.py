@@ -45,29 +45,57 @@ class RunOptions:
     show_errors:          bool = False
     reprocess:            bool = False
     save_models:          bool = False
+    fixed_threshold:      bool = False
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data",    default=DEFAULT_DATA_FOLDER,
-                        help=f"Path to the data folder (default: {DEFAULT_DATA_FOLDER})")
-    parser.add_argument("--results", default=DEFAULT_RESULTS_FOLDER,
-                        help=f"Path to the results folder (default: {DEFAULT_RESULTS_FOLDER})")
-    parser.add_argument("--models",  default=DEFAULT_MODELS_FOLDER,
-                        help=f"Path to save trained models (default: {DEFAULT_MODELS_FOLDER})")
-    parser.add_argument("--poolc",   action="store_true",
-                        help="Load data from the PoolC Hugging Face dataset")
-    parser.add_argument("--sample",  type=int, default=DEFAULT_SAMPLE,
-                        help=f"Number of pairs to sample when using --poolc (default: {DEFAULT_SAMPLE})")
-    parser.add_argument("--no-goc",           action="store_true", help="Skip the GoC classifier")
-    parser.add_argument("--baseline",         action="store_true", help="Run TF-IDF baseline")
-    parser.add_argument("--keyword-baseline", action="store_true", help="Run keyword-only TF-IDF baseline")
-    parser.add_argument("--jaccard",          action="store_true", help="Run Jaccard similarity baseline")
-    parser.add_argument("--show-errors",      action="store_true", help="Print details for failed files")
-    parser.add_argument("--reprocess",        action="store_true", help="Force reprocessing of cached data")
-    parser.add_argument("--save-models",      action="store_true", help="Save trained models to --models folder")
+    parser = argparse.ArgumentParser(
+        description="Train and evaluate GoCP clone detection models.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  python train/main.py --poolc --sample 200000 --save-models\n"
+            "  python train/main.py --poolc --sample 200000 --save-models --baseline --keyword-baseline --jaccard\n"
+            "  python train/main.py --data ./data --save-models --fixed-threshold\n"
+        ),
+    )
+
+    data_group = parser.add_argument_group("data source")
+    data_group.add_argument("--data", metavar="DIR", default=DEFAULT_DATA_FOLDER,
+                            help=f"path to local data folder (default: {DEFAULT_DATA_FOLDER})")
+    data_group.add_argument("--poolc", action="store_true",
+                            help="load data from the PoolC Hugging Face dataset instead of --data")
+    data_group.add_argument("--sample", "-n", metavar="N", type=int, default=DEFAULT_SAMPLE,
+                            help=f"number of pairs to sample from PoolC (default: {DEFAULT_SAMPLE})")
+
+    methods_group = parser.add_argument_group("methods")
+    methods_group.add_argument("--no-goc", action="store_true",
+                               help="skip the GoCP classifier")
+    methods_group.add_argument("--baseline", action="store_true",
+                               help="run TF-IDF (full) baseline")
+    methods_group.add_argument("--keyword-baseline", action="store_true",
+                               help="run TF-IDF (keywords only) baseline")
+    methods_group.add_argument("--jaccard", action="store_true",
+                               help="run Jaccard similarity baseline")
+
+    output_group = parser.add_argument_group("output")
+    output_group.add_argument("--results", "-r", metavar="DIR", default=DEFAULT_RESULTS_FOLDER,
+                              help=f"path to results folder (default: {DEFAULT_RESULTS_FOLDER})")
+    output_group.add_argument("--models", "-m", metavar="DIR", default=DEFAULT_MODELS_FOLDER,
+                              help=f"path to models folder (default: {DEFAULT_MODELS_FOLDER})")
+    output_group.add_argument("--save-models", action="store_true",
+                              help="save trained models to --models")
+
+    misc_group = parser.add_argument_group("misc")
+    misc_group.add_argument("--fixed-threshold", action="store_true",
+                            help="use a fixed 0.5 decision threshold instead of learning it from the validation set")
+    misc_group.add_argument("--reprocess", action="store_true",
+                            help="ignore cached data and reprocess from scratch")
+    misc_group.add_argument("--show-errors", "-v", action="store_true",
+                            help="print details for files that failed to process")
+
     args = parser.parse_args()
 
     opts = RunOptions(
@@ -78,6 +106,7 @@ def main():
         show_errors=args.show_errors,
         reprocess=args.reprocess,
         save_models=args.save_models,
+        fixed_threshold=args.fixed_threshold,
     )
 
     models_folder = args.models if opts.save_models else None
@@ -248,9 +277,9 @@ def _process_poolc(sample_size, show_errors):
 # ── Classifiers and comparisons ───────────────────────────────────────────────
 
 def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts: RunOptions):
-    goc_results     = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder)          if opts.run_goc             else None
-    full_tfidf      = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder=models_folder) if opts.run_baseline        else None
-    keyword_tfidf   = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, keyword_only=True, models_folder=models_folder) if opts.run_keyword_baseline else None
+    goc_results     = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder, fixed_threshold=opts.fixed_threshold)          if opts.run_goc             else None
+    full_tfidf      = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder=models_folder, fixed_threshold=opts.fixed_threshold) if opts.run_baseline        else None
+    keyword_tfidf   = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, keyword_only=True, models_folder=models_folder, fixed_threshold=opts.fixed_threshold) if opts.run_keyword_baseline else None
     jaccard_results = jaccard_baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder, models_folder)  if opts.run_jaccard         else None
 
     comparisons = [
