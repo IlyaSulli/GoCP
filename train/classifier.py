@@ -5,8 +5,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import csv
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import canberra, cosine
 from scipy.stats import pearsonr
@@ -58,32 +59,48 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
     X = np.array(X)
     y = np.array(y)
 
-    # Scaler fitted on ALL data — also used for the saved final model
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X)
+    # Hold out 15% as a validation set for threshold tuning
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.15, random_state=42, stratify=y
+    )
+
+    # Pipeline ensures the scaler is fit only on the CV training fold in each split,
+    # preventing leakage from the test fold's statistics into the scaler.
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)),
+    ])
+
+    # Find threshold on held-out validation set before CV so fold metrics match deployment
+    print("  Finding optimal threshold on validation set...")
+    pipe.fit(X_train, y_train)
+    val_probs = pipe.predict_proba(X_val)[:, 1]
+    best_threshold, best_val_f1 = 0.5, -1.0
+    for t in np.linspace(0.0, 1.0, 101):
+        f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
+        if f1 > best_val_f1:
+            best_val_f1, best_threshold = f1, t
+    print(f"  Optimal threshold (validation F1={best_val_f1:.4f}): {best_threshold:.2f}")
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
-    clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
 
     fold_results = []
     progress = ProgressBar(10, ["Folds"])
     progress.status("Starting cross-validation...")
 
-    for fold, (train_idx, test_idx) in enumerate(skf.split(X, y), start=1):
+    for fold, (train_idx, test_idx) in enumerate(skf.split(X_train, y_train), start=1):
         progress.status(f"Fold {fold}/10: Training...")
-        clf.fit(X[train_idx], y[train_idx])
+        pipe.fit(X_train[train_idx], y_train[train_idx])
         progress.status(f"Fold {fold}/10: Evaluating...")
-        probs = clf.predict_proba(X[test_idx])[:, 1]
-        y_pred = (probs >= 0.5).astype(int)
-        precision = precision_score(y[test_idx], y_pred, zero_division=0)
-        recall    = recall_score(y[test_idx], y_pred, zero_division=0)
-        f1        = f1_score(y[test_idx], y_pred, zero_division=0)
+        probs = pipe.predict_proba(X_train[test_idx])[:, 1]
+        y_pred = (probs >= best_threshold).astype(int)
+        precision = precision_score(y_train[test_idx], y_pred, zero_division=0)
+        recall    = recall_score(y_train[test_idx], y_pred, zero_division=0)
+        f1        = f1_score(y_train[test_idx], y_pred, zero_division=0)
         fold_results.append((fold, precision, recall, f1))
         progress.update("Folds")
 
     progress.finish()
-
-    best_threshold = 0.6
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])
@@ -103,11 +120,14 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
     if models_folder:
         import joblib
         os.makedirs(models_folder, exist_ok=True)
-        print("  Training final GoC model on all data...")
-        final_clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
-        final_clf.fit(X, y)  # X is already scaled by scaler above
+        print("  Training final GoC model on training data...")
+        pipe.fit(X_train, y_train)
         model_path = os.path.join(models_folder, "goc_model.joblib")
-        joblib.dump({"scaler": scaler, "clf": final_clf, "threshold": best_threshold}, model_path)
+        joblib.dump({
+            "scaler": pipe.named_steps["scaler"],
+            "clf": pipe.named_steps["clf"],
+            "threshold": best_threshold,
+        }, model_path)
         print(f"  Saved to {model_path}")
 
     return fold_results

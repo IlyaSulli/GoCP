@@ -7,7 +7,7 @@ import pickle
 import numpy as np
 from scipy import sparse
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.feature_extraction.text import TfidfVectorizer
 from progress import ProgressBar
@@ -63,28 +63,45 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
     X = sparse.hstack([mat_a, mat_b, diff], format="csr")
     y = np.array([1] * len(positive_pairs) + [0] * len(negative_pairs))
 
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    # Hold out 15% as a validation set for threshold tuning
+    all_indices_split = np.arange(X.shape[0])
+    train_idx_split, val_idx_split = train_test_split(
+        all_indices_split, test_size=0.15, random_state=42, stratify=y
+    )
+    X_train, X_val = X[train_idx_split], X[val_idx_split]
+    y_train, y_val = y[train_idx_split], y[val_idx_split]
+
+    # Find threshold on held-out validation set before CV so fold metrics match deployment
+    print(f"  Finding optimal threshold on validation set...")
     clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    clf.fit(X_train, y_train)
+    val_probs = clf.predict_proba(X_val)[:, 1]
+    best_threshold, best_val_f1 = 0.5, -1.0
+    for t in np.linspace(0.0, 1.0, 101):
+        f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
+        if f1 > best_val_f1:
+            best_val_f1, best_threshold = f1, t
+    print(f"  Optimal threshold (validation F1={best_val_f1:.4f}): {best_threshold:.2f}")
+
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
 
     fold_results = []
     progress = ProgressBar(10, ["Folds"])
     progress.status(f"Starting {label} cross-validation...")
 
-    for fold, (train_idx, test_idx) in enumerate(skf.split(X, y), start=1):
+    for fold, (train_idx, test_idx) in enumerate(skf.split(X_train, y_train), start=1):
         progress.status(f"Fold {fold}/10: Training...")
-        clf.fit(X[train_idx], y[train_idx])
+        clf.fit(X_train[train_idx], y_train[train_idx])
         progress.status(f"Fold {fold}/10: Evaluating...")
-        probs = clf.predict_proba(X[test_idx])[:, 1]
-        y_pred = (probs >= 0.5).astype(int)
-        precision = precision_score(y[test_idx], y_pred, zero_division=0)
-        recall    = recall_score(y[test_idx], y_pred, zero_division=0)
-        f1        = f1_score(y[test_idx], y_pred, zero_division=0)
+        probs = clf.predict_proba(X_train[test_idx])[:, 1]
+        y_pred = (probs >= best_threshold).astype(int)
+        precision = precision_score(y_train[test_idx], y_pred, zero_division=0)
+        recall    = recall_score(y_train[test_idx], y_pred, zero_division=0)
+        f1        = f1_score(y_train[test_idx], y_pred, zero_division=0)
         fold_results.append((fold, precision, recall, f1))
         progress.update("Folds")
 
     progress.finish()
-
-    best_threshold = 0.6
 
     avg_precision = np.mean([r[1] for r in fold_results])
     avg_recall    = np.mean([r[2] for r in fold_results])
@@ -106,11 +123,10 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
         import joblib
         os.makedirs(models_folder, exist_ok=True)
         model_name = "tfidf_keyword_model.joblib" if keyword_only else "tfidf_full_model.joblib"
-        print(f"  Training final {label} model on all data...")
-        final_clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-        final_clf.fit(X, y)
+        print(f"  Training final {label} model on training data...")
+        clf.fit(X_train, y_train)
         model_path = os.path.join(models_folder, model_name)
-        joblib.dump({"vectorizer": vectorizer, "clf": final_clf, "keyword_only": keyword_only, "threshold": best_threshold}, model_path)
+        joblib.dump({"vectorizer": vectorizer, "clf": clf, "keyword_only": keyword_only, "threshold": best_threshold}, model_path)
         print(f"  Saved to {model_path}")
 
     return fold_results
