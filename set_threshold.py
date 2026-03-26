@@ -7,17 +7,20 @@ Usage:
     python set_threshold.py tfidf-keywords 0.60
     python set_threshold.py jaccard 0.45
 """
-import sys
 import os
+import shutil
+import sys
+import tempfile
+
 import joblib
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
 MODEL_FILES = {
-    "goc":           "goc_model.joblib",
-    "tfidf":         "tfidf_full_model.joblib",
+    "goc":            "goc_model.joblib",
+    "tfidf":          "tfidf_full_model.joblib",
     "tfidf-keywords": "tfidf_keyword_model.joblib",
-    "jaccard":       "jaccard_model.joblib",
+    "jaccard":        "jaccard_model.joblib",
 }
 
 if len(sys.argv) != 3:
@@ -44,8 +47,20 @@ if not os.path.exists(path):
     sys.exit(1)
 
 model = joblib.load(path)
-old = model.get("threshold", "not set")
+old = model.get("threshold", None)
+old_str = f"{old:.4f}" if isinstance(old, float) else "not set"
 model["threshold"] = threshold
-joblib.dump(model, path)
 
-print(f"{MODEL_FILES[name]}: threshold {old} -> {threshold}")
+# Write to a temporary file first, then rename atomically to avoid
+# corrupting the model file if the process is interrupted mid-write.
+tmp_fd, tmp_path = tempfile.mkstemp(dir=MODELS_DIR, suffix=".tmp")
+try:
+    os.close(tmp_fd)
+    joblib.dump(model, tmp_path)
+    shutil.move(tmp_path, path)
+except Exception:
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+    raise
+
+print(f"{MODEL_FILES[name]}: threshold {old_str} -> {threshold:.4f}")
