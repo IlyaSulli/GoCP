@@ -15,12 +15,6 @@ from dataclasses import dataclass
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from goc import goc
-from features import features
-from preprocess import preprocess
-from classifier import classify
-from baseline import baseline
-from jaccard_baseline import jaccard_baseline
 from progress import Pipeline, ProgressBar
 
 logger = logging.getLogger(__name__)
@@ -28,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 def _worker_init():
     # Worker processes don't inherit the main process's log handlers.
-    # Silence them entirely — exceptions still surface via future.result().
+    # Silence logging and stderr entirely — exceptions surface via future.result().
     logging.disable(logging.CRITICAL)
+    sys.stderr = open(os.devnull, "w")
 
 
 def _setup_logging(results_folder: str, log_path: str = "") -> None:
@@ -48,6 +43,17 @@ def _setup_logging(results_folder: str, log_path: str = "") -> None:
     )
     logger.info("Logging initialised — output: %s", path)
 
+
+_BANNER = (
+    "\n\n"
+    " ██████╗  ██████╗  ██████╗\n"
+    "██╔════╝ ██╔═══██╗██╔════╝\n"
+    "██║  ███╗██║   ██║██║\n"
+    "██║   ██║██║   ██║██║\n"
+    "╚██████╔╝╚██████╔╝╚██████╗\n"
+    " ╚═════╝  ╚═════╝  ╚═════╝\n"
+    "        · Python ·"
+)
 
 DEFAULT_DATA_FOLDER    = "./data/"
 DEFAULT_RESULTS_FOLDER = "./results/"
@@ -78,6 +84,8 @@ class RunOptions:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main():
+    print(_BANNER)
+    print()
     parser = argparse.ArgumentParser(
         description="Train and evaluate GoCP clone detection models.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -263,12 +271,19 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     if using_cache:
         positive_pairs = [tuple(p) for p in cache["positive_pairs"]]
         negative_pairs = [tuple(p) for p in cache["negative_pairs"]]
+        if not positive_pairs and not negative_pairs:
+            print("Cached pair lists are empty — run with --reprocess to rebuild from scratch.")
+            return
     else:
         positive_pairs, negative_pairs, error_count, error_log = _process_poolc(sample_size, pipeline)
-        with open(CACHE_FILE, "w") as f:
-            json.dump({"sample_size": sample_size,
-                       "positive_pairs": positive_pairs,
-                       "negative_pairs": negative_pairs}, f)
+        if positive_pairs or negative_pairs:
+            with open(CACHE_FILE, "w") as f:
+                json.dump({"sample_size": sample_size,
+                           "positive_pairs": positive_pairs,
+                           "negative_pairs": negative_pairs}, f)
+        else:
+            print("No pairs were processed successfully — check --show-errors for details.")
+            return
 
     results = _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts, pipeline)
 
@@ -297,6 +312,10 @@ def _process_poolc(sample_size, pipeline):
     half = sample_size // 2
     pipeline.begin("Stream PoolC dataset", sample_size, ["Pairs"])
     pipeline.status("Streaming PoolC dataset from Hugging Face...")
+
+    # Suppress HuggingFace's unauthenticated-request warning — it prints to
+    # stderr mid-display and breaks the pipeline's line-count tracking.
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
     dataset = load_dataset("PoolC/1-fold-clone-detection-600k-5fold", split="train", streaming=True)
 
@@ -366,6 +385,10 @@ def _process_poolc(sample_size, pipeline):
 # ── Classifiers ───────────────────────────────────────────────────────────────
 
 def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts: RunOptions, pipeline):
+    from classifier import classify
+    from baseline import baseline
+    from jaccard_baseline import jaccard_baseline
+
     results = []
 
     if opts.run_goc:
@@ -479,6 +502,9 @@ def _print_summary(dataset_info, results, results_folder, models_folder):
 # ── Processing helpers ─────────────────────────────────────────────────────────
 
 def _process_file(filepath):
+    from goc import goc
+    from features import features
+    from preprocess import preprocess
     with open(filepath, "r", encoding="utf-8") as f:
         source = preprocess(f.read())
     matches = list(_FUNC_DEF_PATTERN.finditer(source))
@@ -495,6 +521,9 @@ def _process_file(filepath):
 
 
 def _process_pair(code1, code2):
+    from goc import goc
+    from features import features
+    from preprocess import preprocess
     src1, src2 = preprocess(code1), preprocess(code2)
     return features(goc(src1)), features(goc(src2)), src1, src2
 

@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_folder=None, fixed_threshold=False, pipeline=None):
+    if not positive_pairs or not negative_pairs:
+        raise ValueError(
+            f"Cannot train: {len(positive_pairs)} positive pairs and {len(negative_pairs)} negative pairs. "
+            "Run with --reprocess to rebuild the dataset."
+        )
+
     features_cache_path = os.path.join(temp_dir, "features_cache.npz")
 
     X, y = [], []

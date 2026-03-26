@@ -6,7 +6,7 @@ _Y = "\033[33m"   # yellow
 _R = "\033[0m"    # reset
 
 _THROTTLE = 0.25
-_SPINNER  = ("◐", "◒", "◑", "◓")
+_SPINNER  = ("◐", "◓", "◑", "◒")
 
 
 def _enable_ansi():
@@ -60,9 +60,6 @@ class ProgressBar:
             return
         self._tlast = now
 
-        if self._prev:
-            sys.stdout.write(f"\033[{self._prev}A\r\033[J")
-
         lines = []
         if self._status:
             lines.append(f"  {_Y}►{_R}  {self._status}")
@@ -81,7 +78,10 @@ class ProgressBar:
         stats = "  ".join(f"{n}: {c}" for n, c in self.counts.items())
         lines.append(f"  {bar} {tstr}  {stats}")
 
-        sys.stdout.write("\n".join(lines) + "\n")
+        # Build the full redraw as one write so the terminal renders it atomically.
+        buf = "\033[1A\033[2K" * self._prev + "\r" if self._prev else ""
+        buf += "\n".join(lines) + "\n"
+        sys.stdout.write(buf)
         sys.stdout.flush()
         self._prev = len(lines)
 
@@ -157,7 +157,7 @@ class Pipeline:
     def complete(self):
         """Clear the pipeline display before printing the final summary."""
         if self._prev:
-            sys.stdout.write(f"\033[{self._prev}A\r\033[J")
+            sys.stdout.write("\033[1A\033[2K" * self._prev + "\r")
             self._prev = 0
         sys.stdout.flush()
 
@@ -169,9 +169,6 @@ class Pipeline:
             return
         self._tlast = now
         self._spin  = (self._spin + 1) % 4
-
-        if self._prev:
-            sys.stdout.write(f"\033[{self._prev}A\r\033[J")
 
         lines = []
 
@@ -202,6 +199,9 @@ class Pipeline:
 
         lines.append(f"  {bar} {tstr}")
 
-        sys.stdout.write("\n".join(lines) + "\n")
+        # Build the full redraw as one write so the terminal renders it atomically.
+        buf = "\033[1A\033[2K" * self._prev + "\r" if self._prev else ""
+        buf += "\n".join(lines) + "\n"
+        sys.stdout.write(buf)
         sys.stdout.flush()
         self._prev = len(lines)
