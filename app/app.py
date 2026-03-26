@@ -1,9 +1,21 @@
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import streamlit as st
+
+# Write app-level warnings to results/gocp.log (directory created on demand)
+_log_path = os.path.join(os.path.dirname(__file__), '..', 'results', 'gocp.log')
+os.makedirs(os.path.dirname(_log_path), exist_ok=True)
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s  %(levelname)-8s  %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[logging.FileHandler(_log_path, encoding="utf-8")],
+)
+logger = logging.getLogger(__name__)
 from streamlit_ace import st_ace
 from scanner import extract_functions
 from predictor import available_methods, predict
@@ -21,8 +33,8 @@ if not methods:
     st.error(
         "No trained models found in the `models/` folder.\n\n"
         "Train them first by running:\n"
-        "```\npython train/main.py --poolc --save-models --baseline "
-        "--keyword-baseline --jaccard\n```"
+        "```\npython train/main.py --poolc --save-models --tfidf "
+        "--tfidf-keywords --jaccard\n```"
     )
     st.stop()
 
@@ -99,6 +111,7 @@ if st.button("Detect Clone", type="primary", use_container_width=True):
                 st.error(str(e))
                 st.stop()
             except Exception as e:
+                logger.exception("Prediction failed for method=%s", method)
                 st.error(f"Prediction failed: {e}")
                 st.stop()
 
@@ -109,5 +122,7 @@ if st.button("Detect Clone", type="primary", use_container_width=True):
 
         score_label = "Jaccard similarity" if "Jaccard" in method else "Clone probability"
         st.metric(score_label, f"{score:.4f}")
+        if score > 1.0:
+            logger.warning("Score %.4f exceeds 1.0 for method=%s — clamping for display", score, method)
         st.progress(min(score, 1.0))
 

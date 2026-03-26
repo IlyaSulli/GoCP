@@ -1,11 +1,14 @@
 """Extract and preprocess Python functions from source code."""
+import ast
+import logging
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-import ast
 import textwrap
 from preprocess import preprocess
+
+logger = logging.getLogger(__name__)
 
 
 def extract_functions(source: str) -> list[tuple[str, str]]:
@@ -17,17 +20,20 @@ def extract_functions(source: str) -> list[tuple[str, str]]:
     source = textwrap.dedent(preprocess(source))
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except SyntaxError as exc:
+        logger.warning("SyntaxError parsing source; falling back to raw snippet: %s", exc)
         return [("<snippet>", source.strip())]
 
     functions = []
     lines = source.splitlines(keepends=True)
 
-    for node in ast.walk(tree):
+    # Only collect direct children of the Module node (top-level functions).
+    # ast.walk would also yield nested functions inside classes or other
+    # functions, which we do not want here.
+    for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Only keep top-level functions (parent is Module)
             start = node.lineno - 1
-            end = node.end_lineno
+            end   = node.end_lineno
             func_source = "".join(lines[start:end]).rstrip()
             functions.append((node.name, func_source))
 
@@ -52,6 +58,9 @@ def get_function_features(source: str):
     """
     from goc import goc
     from features import features
+
+    if not source or not source.strip():
+        raise ValueError("Source code is empty.")
 
     preprocessed = textwrap.dedent(preprocess(source))
     vec = features(goc(preprocessed))
