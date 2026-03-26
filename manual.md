@@ -153,6 +153,7 @@ python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard
 | `--fixed-threshold` | | Use a fixed 0.5 decision threshold instead of learning it from the validation set |
 | `--reprocess` | | Ignore cached data and reprocess from scratch |
 | `--show-errors` | `-v` | Print details for files that failed to process |
+| `--log [FILE]` | | Write a log file; FILE defaults to `<results>/gocp.log` if not given |
 
 **Example — train GoC only on 50,000 pairs:**
 
