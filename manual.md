@@ -154,6 +154,7 @@ python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard
 | `--reprocess` | | Ignore cached data and reprocess from scratch |
 | `--show-errors` | `-v` | Print details for files that failed to process |
 | `--log [FILE]` | | Write a log file; FILE defaults to `<results>/gocp.log` if not given |
+| `--diverse-negatives [RATIO]` | | Mix in CodeSearchNet (general Python) negatives at the given ratio (default `0.7`); reduces same-domain false positives — only applies with `--poolc` |
 
 **Example — train GoC only on 50,000 pairs:**
 

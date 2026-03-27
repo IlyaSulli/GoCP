@@ -70,16 +70,16 @@ _FUNC_DEF_PATTERN = re.compile(r"^(def\s+(\w+)\s*\()", re.MULTILINE)
 
 @dataclass
 class RunOptions:
-    run_goc:            bool = True
-    run_tfidf:          bool = False
-    run_tfidf_keywords: bool = False
-    run_jaccard:        bool = False
-    show_errors:        bool = False
-    reprocess:          bool = False
-    save_models:        bool = False
-    fixed_threshold:    bool = False
+    run_goc:            bool  = True
+    run_tfidf:          bool  = False
+    run_tfidf_keywords: bool  = False
+    run_jaccard:        bool  = False
+    show_errors:        bool  = False
+    reprocess:          bool  = False
+    save_models:        bool  = False
+    fixed_threshold:    bool  = False
     log_path:           str | None = None   # None = no logging; "" = default path
-
+    diverse_neg_ratio:  float = 0.0         # fraction of negatives drawn from CodeSearchNet
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
@@ -132,6 +132,10 @@ def main():
                             help="print details for files that failed to process")
     misc_group.add_argument("--log", metavar="FILE", nargs="?", const="", default=None,
                             help="write a log file; FILE defaults to <results>/gocp.log")
+    misc_group.add_argument("--diverse-negatives", metavar="RATIO", type=float,
+                            nargs="?", const=0.7, default=0.0,
+                            help="fraction of negatives drawn from CodeSearchNet (general Python) "
+                                 "rather than PoolC; reduces same-domain bias (default when flag is given: 0.7)")
 
     args = parser.parse_args()
 
@@ -145,6 +149,7 @@ def main():
         save_models=args.save_models,
         fixed_threshold=args.fixed_threshold,
         log_path=args.log,
+        diverse_neg_ratio=args.diverse_negatives,
     )
 
     models_folder = args.models if opts.save_models else None
@@ -216,7 +221,9 @@ def run_local(data_folder, results_folder, models_folder, opts: RunOptions):
 
     negative_pairs = _generate_negative_pairs(positive_pairs, func_index[0], len(positive_pairs))
 
-    results = _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts, pipeline)
+    # In local mode all negatives come from the same source, so poolc_negative_pairs = negative_pairs
+    results = _run_classifiers(positive_pairs, negative_pairs, negative_pairs,
+                               results_folder, models_folder, opts, pipeline)
 
     pipeline.complete()
 
@@ -244,17 +251,21 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     logger.info("run_poolc: sample_size=%d  results=%s", sample_size, results_folder)
     using_cache = False
     cache = None
+    diverse_neg_ratio = opts.diverse_neg_ratio
     if not opts.reprocess and os.path.exists(CACHE_FILE):
         with open(CACHE_FILE) as f:
             cache = json.load(f)
-        if cache.get("sample_size") == sample_size:
+        if (cache.get("sample_size") == sample_size
+                and cache.get("diverse_neg_ratio", 0.0) == diverse_neg_ratio):
             using_cache = True
         else:
-            logger.info("Cache sample size mismatch (%s vs %d) — reprocessing", cache.get('sample_size'), sample_size)
+            logger.info("Cache mismatch (sample_size or diverse_neg_ratio changed) — reprocessing")
 
     steps = []
     if not using_cache:
         steps.append("Stream PoolC dataset")
+        if diverse_neg_ratio > 0:
+            steps.append("Stream CodeSearchNet")
     if opts.run_goc:
         steps.append("Train GoCP")
     if opts.run_tfidf:
@@ -269,23 +280,32 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
     error_count = 0
     error_log   = []
     if using_cache:
-        positive_pairs = [tuple(p) for p in cache["positive_pairs"]]
-        negative_pairs = [tuple(p) for p in cache["negative_pairs"]]
-        if not positive_pairs and not negative_pairs:
+        positive_pairs       = [tuple(p) for p in cache["positive_pairs"]]
+        poolc_negative_pairs = [tuple(p) for p in cache["poolc_negative_pairs"]]
+        csn_negative_pairs   = [tuple(p) for p in cache.get("csn_negative_pairs", [])]
+        if not positive_pairs and not poolc_negative_pairs and not csn_negative_pairs:
             print("Cached pair lists are empty — run with --reprocess to rebuild from scratch.")
             return
     else:
-        positive_pairs, negative_pairs, error_count, error_log = _process_poolc(sample_size, pipeline)
-        if positive_pairs or negative_pairs:
+        positive_pairs, poolc_negative_pairs, csn_negative_pairs, error_count, error_log = _process_poolc(
+            sample_size, pipeline, diverse_neg_ratio
+        )
+        if positive_pairs or poolc_negative_pairs or csn_negative_pairs:
             with open(CACHE_FILE, "w") as f:
                 json.dump({"sample_size": sample_size,
+                           "diverse_neg_ratio": diverse_neg_ratio,
                            "positive_pairs": positive_pairs,
-                           "negative_pairs": negative_pairs}, f)
+                           "poolc_negative_pairs": poolc_negative_pairs,
+                           "csn_negative_pairs": csn_negative_pairs}, f)
         else:
             print("No pairs were processed successfully — check --show-errors for details.")
             return
 
-    results = _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts, pipeline)
+    # GoCP trains on all negatives; text-based baselines use PoolC-only negatives
+    # to avoid domain-mixing artifacts in TF-IDF vocabulary.
+    all_negative_pairs = poolc_negative_pairs + csn_negative_pairs
+    results = _run_classifiers(positive_pairs, all_negative_pairs, poolc_negative_pairs,
+                               results_folder, models_folder, opts, pipeline)
 
     pipeline.complete()
 
@@ -294,48 +314,131 @@ def run_poolc(results_folder, models_folder, sample_size, opts: RunOptions):
         for entry in error_log:
             print(entry)
 
-    dataset_info = [
-        f"Dataset:     PoolC (Hugging Face)",
-        f"Sample size: {sample_size} pairs  ({sample_size // 2} positive, {sample_size // 2} negative)",
-    ]
+    half = sample_size // 2
+    if diverse_neg_ratio > 0:
+        poolc_neg = int(half * (1 - diverse_neg_ratio))
+        csn_neg   = half - poolc_neg
+        dataset_info = [
+            f"Dataset:     PoolC + CodeSearchNet (Hugging Face)",
+            f"Sample size: {sample_size} pairs  ({half} positive, {poolc_neg} PoolC neg + {csn_neg} CSN neg)",
+        ]
+    else:
+        dataset_info = [
+            f"Dataset:     PoolC (Hugging Face)",
+            f"Sample size: {sample_size} pairs  ({half} positive, {half} negative)",
+        ]
     if error_count:
-        real_total = len(positive_pairs) + len(negative_pairs)
+        real_total = len(positive_pairs) + len(poolc_negative_pairs) + len(csn_negative_pairs)
         dataset_info.append(f"Processed:   {real_total} pairs  ({error_count} failed)")
 
     _print_summary(dataset_info, results, results_folder, models_folder)
     _run_comparisons(results, results_folder)
 
 
-def _process_poolc(sample_size, pipeline):
+def _collect_csn_negatives(count, pipeline):
+    """Stream Python functions from CodeSearchNet and pair them across different repos.
+
+    Cross-repo pairs are extremely unlikely to be semantic clones, giving clean
+    out-of-domain negatives that break the PoolC same-distribution bias.
+    """
     from datasets import load_dataset
+    import random as _rng
 
-    half = sample_size // 2
+    pipeline.status("Connecting to CodeSearchNet...")
 
-    # Suppress HuggingFace's unauthenticated-request warning — it prints to
-    # stderr mid-display and breaks the pipeline's line-count tracking.
-    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    dataset = load_dataset(
+        "code-search-net/code_search_net",
+        "python",
+        split="train",
+        streaming=True,
+    )
 
-    pipeline.begin("Stream PoolC dataset", sample_size, ["Streamed"])
-    pipeline.status("Connecting to Hugging Face — this may take a moment...")
-
-    dataset = load_dataset("PoolC/1-fold-clone-detection-600k-5fold", split="train", streaming=True)
-
-    pipeline.status("Streaming pairs...")
-    pairs_raw = []
-    pos_count = neg_count = 0
+    # Collect ~2× target so we have slack to discard same-repo pairs
+    target_funcs = count * 2 + 500
+    funcs = []   # [(repo_name, func_code)]
+    pipeline.status("Collecting functions from CodeSearchNet...")
     for row in dataset:
-        if row["similar"] == 1 and pos_count < half:
-            pairs_raw.append((row["code1"], row["code2"], 1))
-            pos_count += 1
-            pipeline.update("Streamed")
-        elif row["similar"] == 0 and neg_count < half:
-            pairs_raw.append((row["code1"], row["code2"], 0))
-            neg_count += 1
-            pipeline.update("Streamed")
-        if pos_count >= half and neg_count >= half:
+        code = (row.get("func_code_string") or "").strip()
+        repo = row.get("repository_name") or ""
+        if code and 30 <= len(code) <= 3000:
+            funcs.append((repo, code))
+        if len(funcs) >= target_funcs:
             break
 
-    pipeline.begin("Stream PoolC dataset", len(pairs_raw), ["Processed"])
+    _rng.shuffle(funcs)
+
+    # Split into two pools and pair functions from different repos
+    mid    = len(funcs) // 2
+    pool_a = funcs[:mid]
+    pool_b = funcs[mid:]
+
+    pairs = []
+    j = 0
+    for repo_a, code_a in pool_a:
+        if len(pairs) >= count:
+            break
+        while j < len(pool_b):
+            repo_b, code_b = pool_b[j]
+            j += 1
+            if repo_a != repo_b:
+                pairs.append((code_a, code_b))
+                pipeline.update("Collected")
+                break
+
+    logger.info("CSN negatives collected: %d requested, %d produced", count, len(pairs))
+    return pairs
+
+
+def _process_poolc(sample_size, pipeline, diverse_neg_ratio=0.0):
+    from datasets import load_dataset, disable_progress_bar
+
+    half         = sample_size // 2
+    poolc_neg    = int(half * (1 - diverse_neg_ratio))
+    csn_neg      = half - poolc_neg
+    poolc_total  = half + poolc_neg   # positives + PoolC negatives
+
+    # Suppress ALL HF/datasets output before the first pipeline draw.
+    # These libraries write warnings and progress bars to stderr which interleave
+    # with pipeline redraws and corrupt the line-count used for cursor positioning.
+    disable_progress_bar()
+    for _log in ("datasets", "huggingface_hub", "fsspec", "filelock"):
+        logging.getLogger(_log).setLevel(logging.CRITICAL)
+
+    _old_stderr, sys.stderr = sys.stderr, open(os.devnull, "w")
+    try:
+        pipeline.begin("Stream PoolC dataset", poolc_total, ["Streamed"])
+        pipeline.status("Connecting to Hugging Face — this may take a moment...")
+
+        dataset = load_dataset("PoolC/1-fold-clone-detection-600k-5fold", split="train", streaming=True)
+
+        pipeline.status("Streaming pairs...")
+        pairs_raw = []
+        pos_count = neg_count = 0
+        for row in dataset:
+            if row["similar"] == 1 and pos_count < half:
+                pairs_raw.append((row["code1"], row["code2"], 1))
+                pos_count += 1
+                pipeline.update("Streamed")
+            elif row["similar"] == 0 and neg_count < poolc_neg:
+                pairs_raw.append((row["code1"], row["code2"], 0))
+                neg_count += 1
+                pipeline.update("Streamed")
+            if pos_count >= half and neg_count >= poolc_neg:
+                break
+
+        pipeline.finish()  # mark PoolC step as complete before starting CSN
+
+        if csn_neg > 0:
+            pipeline.begin("Stream CodeSearchNet", csn_neg, ["Collected"])
+            csn_pairs = _collect_csn_negatives(csn_neg, pipeline)
+            for code_a, code_b in csn_pairs:
+                pairs_raw.append((code_a, code_b, 2))  # 2 = CSN negative sentinel
+    finally:
+        sys.stderr = _old_stderr
+
+    # Reuse the last streaming step to show processing progress
+    last_stream_step = "Stream CodeSearchNet" if csn_neg > 0 else "Stream PoolC dataset"
+    pipeline.begin(last_stream_step, len(pairs_raw), ["Processed"])
     pipeline.status("Starting worker processes — may freeze briefly depending on hardware...")
     os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -378,20 +481,22 @@ def _process_poolc(sample_size, pipeline):
 
     pipeline.finish()
 
-    positive_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 1]
-    negative_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 0]
-    error_count    = len(pairs_raw) - len(labeled_pairs)
+    positive_pairs       = [(a, b) for a, b, lbl in labeled_pairs if lbl == 1]
+    poolc_negative_pairs = [(a, b) for a, b, lbl in labeled_pairs if lbl == 0]
+    csn_negative_pairs   = [(a, b) for a, b, lbl in labeled_pairs if lbl == 2]
+    error_count          = len(pairs_raw) - len(labeled_pairs)
 
     with open(TEXTS_CACHE_FILE, "wb") as f:
         pickle.dump(texts, f)
     np.savez(FEATURES_CACHE_FILE, **{str(k): v for k, v in feature_vecs.items()})
 
-    return positive_pairs, negative_pairs, error_count, error_log
+    return positive_pairs, poolc_negative_pairs, csn_negative_pairs, error_count, error_log
 
 
 # ── Classifiers ───────────────────────────────────────────────────────────────
 
-def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_folder, opts: RunOptions, pipeline):
+def _run_classifiers(positive_pairs, negative_pairs, poolc_negative_pairs,
+                     results_folder, models_folder, opts: RunOptions, pipeline):
     from classifier import classify
     from baseline import baseline
     from jaccard_baseline import jaccard_baseline
@@ -399,24 +504,27 @@ def _run_classifiers(positive_pairs, negative_pairs, results_folder, models_fold
     results = []
 
     if opts.run_goc:
+        # GoCP uses all negatives (PoolC + CSN) to benefit from diverse training.
         r = classify(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
                      models_folder, fixed_threshold=opts.fixed_threshold, pipeline=pipeline)
         results.append(r)
 
     if opts.run_tfidf:
-        r = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+        # TF-IDF uses PoolC-only negatives — CSN code shifts the vocabulary
+        # distribution and breaks the feature space for competitive-programming eval.
+        r = baseline(positive_pairs, poolc_negative_pairs, TEMP_DIR, results_folder,
                      keyword_only=False, models_folder=models_folder,
                      fixed_threshold=opts.fixed_threshold, pipeline=pipeline)
         results.append(r)
 
     if opts.run_tfidf_keywords:
-        r = baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+        r = baseline(positive_pairs, poolc_negative_pairs, TEMP_DIR, results_folder,
                      keyword_only=True, models_folder=models_folder,
                      fixed_threshold=opts.fixed_threshold, pipeline=pipeline)
         results.append(r)
 
     if opts.run_jaccard:
-        r = jaccard_baseline(positive_pairs, negative_pairs, TEMP_DIR, results_folder,
+        r = jaccard_baseline(positive_pairs, poolc_negative_pairs, TEMP_DIR, results_folder,
                              models_folder=models_folder, pipeline=pipeline)
         results.append(r)
 
@@ -430,6 +538,8 @@ def _run_comparisons(results, results_folder):
         ("GoCP",             "TF-IDF (Keywords)",  "statistical_comparison_keyword.csv"),
         ("GoCP",             "Jaccard",             "statistical_comparison_jaccard.csv"),
         ("TF-IDF (Full)",    "TF-IDF (Keywords)",  "statistical_comparison_tfidf_vs_keyword.csv"),
+        ("TF-IDF (Full)",    "Jaccard",             "statistical_comparison_tfidf_vs_jaccard.csv"),
+        ("TF-IDF (Keywords)","Jaccard",             "statistical_comparison_keyword_vs_jaccard.csv"),
     ]
     for name_a, name_b, filename in pairs:
         if name_a in by_name and name_b in by_name:
