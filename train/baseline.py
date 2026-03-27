@@ -125,7 +125,7 @@ def baseline(positive_pairs, negative_pairs, temp_dir, results_folder, keyword_o
         os.makedirs(models_folder, exist_ok=True)
         model_name = "tfidf_keyword_model.joblib" if keyword_only else "tfidf_full_model.joblib"
         progress.status(f"Saving {step_name} model...")
-        clf.fit(X_train, y_train)
+        clf.fit(X, y)
         model_path = os.path.join(models_folder, model_name)
         joblib.dump({"vectorizer": vectorizer, "clf": clf, "keyword_only": keyword_only, "threshold": best_threshold}, model_path)
         logger.info("%s model saved to %s", step_name, model_path)
