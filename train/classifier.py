@@ -5,13 +5,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import csv
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
-from sklearn.pipeline import Pipeline as SKPipeline
-from sklearn.preprocessing import StandardScaler
 from progress import ProgressBar
-from utils import similarity_features
+from utils import pairwise_goc_features
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +30,12 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
             for idx_a, idx_b in positive_pairs:
                 vec_a = np.nan_to_num(cache[str(idx_a)], nan=0.0, posinf=0.0, neginf=0.0)
                 vec_b = np.nan_to_num(cache[str(idx_b)], nan=0.0, posinf=0.0, neginf=0.0)
-                sim = similarity_features(vec_a, vec_b)
-                X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+                X.append(pairwise_goc_features(vec_a, vec_b))
                 y.append(1)
             for idx_a, idx_b in negative_pairs:
                 vec_a = np.nan_to_num(cache[str(idx_a)], nan=0.0, posinf=0.0, neginf=0.0)
                 vec_b = np.nan_to_num(cache[str(idx_b)], nan=0.0, posinf=0.0, neginf=0.0)
-                sim = similarity_features(vec_a, vec_b)
-                X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+                X.append(pairwise_goc_features(vec_a, vec_b))
                 y.append(0)
     else:
         def _load_vec(idx):
@@ -47,13 +43,11 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
             return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
         for idx_a, idx_b in positive_pairs:
             vec_a, vec_b = _load_vec(idx_a), _load_vec(idx_b)
-            sim = similarity_features(vec_a, vec_b)
-            X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+            X.append(pairwise_goc_features(vec_a, vec_b))
             y.append(1)
         for idx_a, idx_b in negative_pairs:
             vec_a, vec_b = _load_vec(idx_a), _load_vec(idx_b)
-            sim = similarity_features(vec_a, vec_b)
-            X.append(np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]))
+            X.append(pairwise_goc_features(vec_a, vec_b))
             y.append(0)
 
     X = np.array(X)
@@ -64,12 +58,17 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
         X, y, test_size=0.15, random_state=42, stratify=y
     )
 
-    # Pipeline ensures the scaler is fit only on the CV training fold in each split,
-    # preventing leakage from the test fold's statistics into the scaler.
-    pipe = SKPipeline([
-        ("scaler", StandardScaler()),
-        ("clf", RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)),
-    ])
+    # HistGradientBoostingClassifier is scale-invariant — no scaler needed.
+    # early_stopping halts training automatically when validation loss stops improving,
+    # so max_iter=500 is a ceiling rather than a fixed cost.
+    # class_weight='balanced' corrects for any positive/negative imbalance so the
+    # model doesn't collapse to predicting the majority class.
+    clf = HistGradientBoostingClassifier(
+        max_iter=500,
+        early_stopping=True,
+        random_state=42,
+        class_weight="balanced",
+    )
 
     skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     total_steps = 10 + (2 if models_folder else 1)  # folds + threshold + optional save
@@ -87,8 +86,8 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
         logger.info("GoCP: using fixed threshold 0.50")
     else:
         progress.status("Finding optimal threshold on validation set...")
-        pipe.fit(X_train, y_train)
-        val_probs = pipe.predict_proba(X_val)[:, 1]
+        clf.fit(X_train, y_train)
+        val_probs = clf.predict_proba(X_val)[:, 1]
         best_threshold, best_val_f1 = 0.5, -1.0
         for t in np.linspace(0.0, 1.0, 101):
             f1 = f1_score(y_val, (val_probs >= t).astype(int), zero_division=0)
@@ -101,9 +100,9 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
     fold_results = []
     for fold, (train_idx, test_idx) in enumerate(skf.split(X_train, y_train), start=1):
         progress.status(f"Fold {fold}/10: Training...")
-        pipe.fit(X_train[train_idx], y_train[train_idx])
+        clf.fit(X_train[train_idx], y_train[train_idx])
         progress.status(f"Fold {fold}/10: Evaluating...")
-        probs = pipe.predict_proba(X_train[test_idx])[:, 1]
+        probs = clf.predict_proba(X_train[test_idx])[:, 1]
         y_pred = (probs >= best_threshold).astype(int)
         precision = precision_score(y_train[test_idx], y_pred, zero_division=0)
         recall    = recall_score(y_train[test_idx], y_pred, zero_division=0)
@@ -121,12 +120,12 @@ def classify(positive_pairs, negative_pairs, temp_dir, results_folder, models_fo
     if models_folder:
         import joblib
         os.makedirs(models_folder, exist_ok=True)
-        progress.status("Saving GoCP model...")
-        pipe.fit(X_train, y_train)
+        progress.status("Saving GoCP model (fit on full dataset)...")
+        # Fit on ALL data (not just X_train) so the saved model uses every available pair.
+        clf.fit(X, y)
         model_path = os.path.join(models_folder, "goc_model.joblib")
         joblib.dump({
-            "scaler": pipe.named_steps["scaler"],
-            "clf": pipe.named_steps["clf"],
+            "clf": clf,
             "threshold": best_threshold,
         }, model_path)
         logger.info("GoCP model saved to %s", model_path)

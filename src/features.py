@@ -8,12 +8,18 @@ from scipy.stats import skew, mode
 logger = logging.getLogger(__name__)
 
 
-def features(tree):
+def features(tree) -> np.ndarray:
+    """Compute the 56-dimensional GoC fingerprint for a single function graph.
+
+    Layout:
+      [0:48]  node-level statistics  (6 metrics × 8 summary stats)
+      [48:56] graph-level properties (network_size, edges, triangles, …)
+    """
     weighted_degree = tree.degree(weight="weight")
     try:
         eigenvector_centrality = nx.eigenvector_centrality(tree, weight="weight", max_iter=1000)
     except nx.PowerIterationFailedConvergence:
-        logger.warning("eigenvector_centrality failed to converge; defaulting to 0.0 for all nodes")
+        logger.debug("eigenvector_centrality failed to converge; defaulting to 0.0 for all nodes")
         eigenvector_centrality = {node: 0.0 for node in tree.nodes()}
     page_rank = nx.pagerank(tree, weight="weight")
     local_clustering = nx.clustering(tree.to_undirected())

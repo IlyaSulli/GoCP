@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
-from utils import similarity_features, jaccard_similarity
+from utils import pairwise_goc_features, jaccard_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +38,13 @@ def _validate_inputs(text_a: str, text_b: str) -> None:
 
 
 def predict_goc(text_a: str, text_b: str) -> tuple[int, float]:
-    """Predict using the GoC + RandomForest model."""
+    """Predict using the GoC + Gradient Boosted Trees model."""
     from scanner import get_function_features
 
     _validate_inputs(text_a, text_b)
 
     model = _load_model("goc_model.joblib")
-    scaler = model["scaler"]
-    clf    = model["clf"]
+    clf       = model["clf"]
     threshold = _get_threshold(model, "goc_model.joblib")
 
     _, vec_a = get_function_features(text_a)
@@ -54,9 +53,7 @@ def predict_goc(text_a: str, text_b: str) -> tuple[int, float]:
     vec_a = np.nan_to_num(vec_a, nan=0.0, posinf=0.0, neginf=0.0)
     vec_b = np.nan_to_num(vec_b, nan=0.0, posinf=0.0, neginf=0.0)
 
-    sim = similarity_features(vec_a, vec_b)
-    X = np.concatenate([vec_a, vec_b, np.abs(vec_a - vec_b), sim]).reshape(1, -1)
-    X = scaler.transform(X)
+    X = pairwise_goc_features(vec_a, vec_b).reshape(1, -1)
 
     prob = float(clf.predict_proba(X)[0][1])
     label = int(prob >= threshold)
