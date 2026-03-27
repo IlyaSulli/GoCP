@@ -65,24 +65,25 @@ python train/main.py --poolc --save-models --tfidf --tfidf-keywords --jaccard --
 
 ## Expected Results
 
-The following results should be reproduced (averaged across 10 folds):
 
-| Method | Precision | Recall | F1 |
+The following results should be reproduced for GoCP (10-fold CV, with diverse negatives):
+
+| Fold | Precision | Recall | F1 |
 |---|---|---|---|
-| **GoC (Graph-of-Code)** | 0.7499 | 0.7884 | 0.7686 |
-| **TF-IDF (full)** | 0.8720 | 0.8606 | 0.8662 |
-| **TF-IDF (keywords only)** | 0.7319 | 0.7168 | 0.7242 |
-| **Jaccard similarity** | 0.6417 | 0.7766 | 0.7027 |
+| 1 | 0.837 | 0.947 | 0.889 |
+| 2 | 0.847 | 0.947 | 0.894 |
+| 3 | 0.844 | 0.943 | 0.891 |
+| 4 | 0.846 | 0.949 | 0.895 |
+| 5 | 0.839 | 0.943 | 0.888 |
+| 6 | 0.836 | 0.943 | 0.887 |
+| 7 | 0.844 | 0.946 | 0.892 |
+| 8 | 0.841 | 0.951 | 0.893 |
+| 9 | 0.856 | 0.952 | 0.901 |
+| 10 | 0.842 | 0.947 | 0.892 |
+| **Average** | **0.843** | **0.947** | **0.892** |
 
-Statistical comparison (GoC vs TF-IDF full, Wilcoxon signed-rank test):
+See [results/gocp_results.csv](results/gocp_results.csv) for raw output.
 
-| Metric | Value |
-|---|---|
-| GoC average F1 | 0.7686 |
-| TF-IDF (full) average F1 | 0.8662 |
-| Wilcoxon W | 0.0000 |
-| p-value | 0.0020 |
-| Effect size (r) | 0.9794 |
 
 Raw per-fold results are saved to `results/` as CSV files and can be compared directly with the versions already in the repository.
 

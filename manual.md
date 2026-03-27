@@ -8,7 +8,7 @@ GoCP is a Python code clone detection tool that identifies whether two Python fu
 
 | Method | Approach | Best For |
 |---|---|---|
-| GoC (Graph-of-Code) | AST graph + Random Forest | All clone types, especially Type-3/4 |
+| GoC (Graph-of-Code) | AST graph, 56 graph metrics, pairwise domain-agnostic features, Gradient Boosted Trees | All clone types, especially Type-3/4 |
 | TF-IDF (full) | Token vectors + Random Forest | General similarity |
 | TF-IDF (keywords only) | Keyword vectors + Random Forest | Structural similarity |
 | Jaccard similarity | Token set overlap | Quick approximation |

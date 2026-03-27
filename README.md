@@ -6,9 +6,9 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.55-FF4B4B?logo=streamlit&logoColor=white)
 ![License](https://img.shields.io/github/license/IlyaSulli/GoCP)
 
-A Python code clone detection tool built on the **Graph-of-Code (GoC)** approach. GoCP represents each function as a dependency graph — capturing structural, control, and data-flow relationships — and uses a Random Forest classifier to detect clones across all four clone types.
+A Python code clone detection tool built on the **Graph-of-Code (GoC)** approach. GoCP represents each function as a dependency graph — capturing structural, control, and data-flow relationships — and uses a scale-invariant Gradient Boosted Trees classifier with domain-agnostic pairwise features to detect clones across all four clone types.
 
-Includes three baseline methods (TF-IDF full, TF-IDF keywords, Jaccard similarity) for comparison.
+Includes three baseline methods (TF-IDF full, TF-IDF keywords, Jaccard similarity) for comparison. Now supports mixing in CodeSearchNet negatives for robust, out-of-domain evaluation (see `--diverse-negatives`).
 
 ---
 
@@ -45,7 +45,7 @@ The app opens at `http://localhost:8501`. Paste two Python functions, select a m
 
 | Method | How it works |
 |---|---|
-| **GoC (Graph-of-Code)** | Builds a dependency graph per function, extracts 56 graph metrics, classifies with Random Forest |
+| **GoC (Graph-of-Code)** | Dependency graph per function, 56 graph metrics, pairwise domain-agnostic features, Gradient Boosted Trees |
 | **TF-IDF (full)** | Bag-of-words token vectors + Random Forest |
 | **TF-IDF (keywords only)** | Python keyword vectors + Random Forest |
 | **Jaccard similarity** | Token set overlap with a learned threshold |
@@ -55,8 +55,25 @@ The app opens at `http://localhost:8501`. Paste two Python functions, select a m
 ## Retraining
 
 ```bash
-# Retrain all models on 200,000 pairs
 python train/main.py --poolc -n 200000 --save-models --tfidf --tfidf-keywords --jaccard
+---
+
+## Training Arguments (Summary)
+
+| Flag | Description |
+|---|---|
+| `--poolc` | Use PoolC dataset from Hugging Face |
+| `--diverse-negatives [RATIO]` | Mix in CodeSearchNet negatives at given ratio (default 0.7) for robust negative sampling |
+| `--tfidf` | Train TF-IDF (full) baseline |
+| `--tfidf-keywords` | Train TF-IDF (keywords only) baseline |
+| `--jaccard` | Train Jaccard baseline |
+| `--save-models` | Save trained models |
+| `--fixed-threshold` | Use fixed 0.5 threshold instead of learning |
+| `--reprocess` | Ignore cache and reprocess data |
+| `--show-errors` | Print details for failed files |
+| `--log [FILE]` | Write a log file |
+
+---
 
 # Use a fixed 0.5 threshold instead of learning it from the validation set
 python train/main.py --poolc -n 200000 --save-models --fixed-threshold
