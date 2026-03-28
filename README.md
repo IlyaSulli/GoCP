@@ -56,6 +56,8 @@ The app opens at `http://localhost:8501`. Paste two Python functions, select a m
 
 ```bash
 python train/main.py --poolc -n 200000 --save-models --tfidf --tfidf-keywords --jaccard
+```
+
 ---
 
 ## Training Arguments (Summary)
@@ -75,7 +77,8 @@ python train/main.py --poolc -n 200000 --save-models --tfidf --tfidf-keywords --
 
 ---
 
-# Use a fixed 0.5 threshold instead of learning it from the validation set
+Use a fixed 0.5 threshold instead of learning it from the validation set
+```
 python train/main.py --poolc -n 200000 --save-models --fixed-threshold
 ```
 
