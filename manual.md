@@ -213,6 +213,8 @@ python -c "import joblib; m = joblib.load('models/goc_model.joblib'); print(m.ge
 
 ## Running the Evaluation Suite
 
+### Clone Type Evaluation
+
 To evaluate all available models against the 50-case clone type test suite:
 
 ```bash
@@ -229,6 +231,19 @@ This tests 10 cases per clone type:
 
 Results are printed to the terminal showing pass/fail per case, per-type accuracy, and overall accuracy per method.
 
+### Cross-Validation Metrics
+
+To run 10-fold stratified cross-validation with pairwise Wilcoxon signed-rank tests and end-to-end prediction timing:
+
+```bash
+python test/eval_metrics.py
+```
+
+This produces:
+- Per-model accuracy, precision, recall, F1, and AUC-ROC (mean ± std across 10 folds)
+- Pairwise Wilcoxon signed-rank tests between all model pairs on accuracy, F1, and AUC-ROC
+- End-to-end prediction time per pair (mean ± std over 100 sampled pairs)
+
 ---
 
 ## Project Structure
@@ -243,19 +258,23 @@ GoCP/
 ├── src/
 │   ├── goc.py              # Graph-of-Code construction
 │   ├── features.py         # 56-feature graph fingerprint
-│   └── preprocess.py       # Source code preprocessing
+│   ├── preprocess.py       # Source code preprocessing
+│   ├── progress.py         # Terminal progress display
+│   └── utils.py            # Shared utility functions
 ├── train/
 │   ├── main.py             # Training entry point
 │   ├── classifier.py       # GoCP + RandomForest trainer
 │   ├── baseline.py         # TF-IDF trainer
 │   └── jaccard_baseline.py # Jaccard trainer
 ├── test/
-│   └── clone_type_eval.py  # Clone type evaluation suite
+│   ├── clone_type_eval.py  # Clone type evaluation suite
+│   └── eval_metrics.py     # Cross-validation, Wilcoxon tests, timing
 ├── results/                # Training results (CSV)
 ├── set_threshold.py        # Threshold override utility
 ├── manual.md               # This file
 ├── replication.md          # Replication instructions
-└── requirements.txt        # Python dependencies
+├── requirements.txt        # Python dependencies
+└── requirements.md         # Dependency descriptions
 ```
 
 ---

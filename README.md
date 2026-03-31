@@ -55,7 +55,7 @@ The app opens at `http://localhost:8501`. Paste two Python functions, select a m
 ## Retraining
 
 ```bash
-python train/main.py --poolc -n 200000 --save-models --tfidf --tfidf-keywords --jaccard
+python train/main.py --poolc -n 100000 --save-models --tfidf --tfidf-keywords --jaccard --diverse-negatives 0.7
 ```
 
 ---
@@ -79,7 +79,7 @@ python train/main.py --poolc -n 200000 --save-models --tfidf --tfidf-keywords --
 
 Use a fixed 0.5 threshold instead of learning it from the validation set
 ```
-python train/main.py --poolc -n 200000 --save-models --fixed-threshold
+python train/main.py --poolc -n 100000 --save-models --fixed-threshold
 ```
 
 See [manual.md](manual.md) for the full list of training options and how to adjust decision thresholds.
@@ -88,11 +88,15 @@ See [manual.md](manual.md) for the full list of training options and how to adju
 
 ## Evaluating
 
+**Clone type evaluation** — 50 hand-crafted test cases (10 per clone type):
 ```bash
 python test/clone_type_eval.py
 ```
 
-Runs all available models against 50 hand-crafted test cases (10 per clone type) and reports per-type accuracy.
+**Cross-validation metrics, Wilcoxon tests, and end-to-end timing:**
+```bash
+python test/eval_metrics.py
+```
 
 ---
 
@@ -103,6 +107,7 @@ Runs all available models against 50 hand-crafted test cases (10 per clone type)
 | [`manual.md`](manual.md) | Full usage guide — installation, app, training, evaluation, troubleshooting |
 | [`replication.md`](replication.md) | Step-by-step instructions to reproduce the reported results |
 | [`requirements.txt`](requirements.txt) | Python dependencies with pinned versions |
+| [`requirements.md`](requirements.md) | Dependency descriptions and compatibility notes |
 
 ---
 
@@ -113,13 +118,13 @@ Runs all available models against 50 hand-crafted test cases (10 per clone type)
 <img width="2048" height="1094" alt="carbon" src="https://github.com/user-attachments/assets/6876bf02-6739-4d5e-872e-77768b4abed4" />
 
 ### Type 4 Functions
-The following functions have slightly different graphcial representations but serves the same function. It has correctly identified that they **ARE** clone functions 
+The following functions have slightly different graphical representations but serve the same function. It has correctly identified that they **ARE** clone functions 
 
 <img width="3840" height="2160" alt="Screenshot 2026-03-24 102047" src="https://github.com/user-attachments/assets/23b7023d-95d0-4593-ad97-f575ce6a6ffc" />
 
 ### Similar Functions
 
-The following functions have a similar graphical representation but is not the same function. It has correctly identified that they are **NOT** clone functions
+The following functions have a similar graphical representation but are not the same function. It has correctly identified that they are **NOT** clone functions
 
 <img width="3840" height="2160" alt="Screenshot 2026-03-24 101851" src="https://github.com/user-attachments/assets/ee21d94d-697d-4ea4-8c26-f2afebb91a11" />
 
