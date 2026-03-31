@@ -6,6 +6,7 @@ import os, sys, json, pickle
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'train'))
 
+import time
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
@@ -193,7 +194,7 @@ model_names = list(all_results.keys())
 metrics_to_test = ["accuracy", "f1", "auc_roc"]
 
 for metric in metrics_to_test:
-    print(f"\n── {metric.upper()} ──")
+    print(f"\n-- {metric.upper()} --")
     print(f"  {'Comparison':<45} {'W':>8}  {'p':>8}  {'r':>6}  Sig  Winner")
     print(f"  {'-'*85}")
     for name_a, name_b in combinations(model_names, 2):
@@ -206,8 +207,44 @@ for metric in metrics_to_test:
             r = z / np.sqrt(len(vals_a))
             sig = "*" if p < 0.05 else " "
             winner = name_a if mean_a > mean_b else name_b
-            winner_str = winner if p < 0.05 else "—"
+            winner_str = winner if p < 0.05 else "-"
             label = f"{name_a} vs {name_b}"
             print(f"  {label:<45} {stat:>8.2f}  {p:>8.4f}  {r:>6.4f}  {sig}    {winner_str}")
         except Exception as e:
             print(f"  {name_a} vs {name_b}: could not compute ({e})")
+
+# ── End-to-end timing ─────────────────────────────────────────────────────────
+# Times the full pipeline: raw source → preprocessing → feature extraction → prediction.
+
+print("\n" + "=" * 50)
+print("End-to-End Prediction Time (per pair, ms)")
+print("=" * 50)
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+from predictor import predict_goc, predict_tfidf, predict_jaccard
+
+N_SAMPLES = 100
+rng = np.random.default_rng(42)
+sample_idx = rng.choice(len(all_pairs), size=N_SAMPLES, replace=False)
+sample_pairs = [all_pairs[i] for i in sample_idx]
+
+e2e_models = {
+    "GoC (Graph-of-Code)":   lambda a, b: predict_goc(a, b),
+    "TF-IDF (Full)":         lambda a, b: predict_tfidf(a, b, keyword_only=False),
+    "TF-IDF (Keywords)":     lambda a, b: predict_tfidf(a, b, keyword_only=True),
+    "Jaccard Similarity":    lambda a, b: predict_jaccard(a, b),
+}
+
+print(f"  Benchmarking on {N_SAMPLES} pairs...")
+print(f"  {'Model':<25} {'Mean (ms)':>10}  {'Std (ms)':>10}")
+print(f"  {'-'*48}")
+
+for model_name, predict_fn in e2e_models.items():
+    times_ms = []
+    for a_idx, b_idx in sample_pairs:
+        text_a = texts[a_idx]
+        text_b = texts[b_idx]
+        t0 = time.perf_counter()
+        predict_fn(text_a, text_b)
+        times_ms.append((time.perf_counter() - t0) * 1000)
+    print(f"  {model_name:<25} {np.mean(times_ms):>10.2f}  {np.std(times_ms):>10.2f}")
