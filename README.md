@@ -10,6 +10,8 @@ A Python code clone detection tool built on the **Graph-of-Code (GoC)** approach
 
 Includes three baseline methods (TF-IDF full, TF-IDF keywords, Jaccard similarity) for comparison. Now supports mixing in CodeSearchNet negatives for robust, out-of-domain evaluation (see `--diverse-negatives`).
 
+Read the research paper [here](https://github.com/IlyaSulli/GoCP/blob/main/ISE%20Research%20Paper.pdf)
+
 ---
 
 ## Features
