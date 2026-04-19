@@ -1,11 +1,5 @@
 """
 Manually override the decision threshold saved in a model file.
-
-Usage:
-    python set_threshold.py goc 0.65
-    python set_threshold.py tfidf 0.60
-    python set_threshold.py tfidf-keywords 0.60
-    python set_threshold.py jaccard 0.45
 """
 import os
 import shutil
